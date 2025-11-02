@@ -1,14 +1,16 @@
-const express=require('express');
-const app=express();
-const db=require('./util/database.js');
-const authRoute=require('./routes/auth.js');
-const session=require("express-session");
+const express = require('express');
+const app = express();
+const db = require('./util/database.js');
+const authRoute = require('./routes/auth.js');
+const teacherRoute = require('./routes/teacher.js');
+const studentRoutes = require('./routes/student.js');
+const session = require("express-session");
 const MySQLStore = require('express-mysql-session')(session);
-const cors=require('cors');
-const csrf=require("csurf");
+const cors = require('cors');
+const csrf = require("csurf");
 app.use(cors({
-    origin:"http://localhost:3001",
-    credentials: true  
+  origin: "http://localhost:3001",
+  credentials: true
 }));
 
 
@@ -34,13 +36,13 @@ const sessionStore = new MySQLStore(
   db.db // <-- use the actual pool object, see below how to fix this
 );
 app.use(session({
-    secret:"my secret",
-    resave:false,
-    saveUninitialized:false,
-    store: sessionStore,
-    cookie:{
-        maxAge:1000*60*60
-    }
+  secret: "my secret",
+  resave: false,
+  saveUninitialized: false,
+  store: sessionStore,
+  cookie: {
+    maxAge: 1000 * 60 * 60
+  }
 }));
 
 // app.use((req, res, next) => {
@@ -52,19 +54,23 @@ app.use(session({
 // });
 // --- CSRF protection middleware ---
 const csrfProtection = csrf({ cookie: false }); // using session
+app.use(authRoute);
 app.use(csrfProtection);
 
 // Route to send CSRF token to React
 app.get('/csrf-token', (req, res) => {
-    res.json({ csrfToken: req.csrfToken() });
+  res.json({ csrfToken: req.csrfToken() });
 });
 
-app.use(authRoute);
 
-db.getConnection().then(result=>{
-    
-    app.listen(3000,()=>{
-        console.log("database connection successfull")
-        console.log("server running on port 3000"); 
-    });
-}).catch(err=>console.log("connection to the database failed",err));
+app.use(teacherRoute);
+
+app.use(studentRoutes);
+
+db.getConnection().then(result => {
+
+  app.listen(3000, () => {
+    console.log("database connection successfull")
+    console.log("server running on port 3000");
+  });
+}).catch(err => console.log("connection to the database failed", err));
