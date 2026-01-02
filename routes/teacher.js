@@ -1,15 +1,15 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const teacherController = require('../controllers/teacherController.js');
-router.get('/teacher/dashboard', teacherController.getDashboard);
-router.post('/teacher/create-subject', teacherController.createSubject);
+const teacherController = require("../controllers/teacherController");
 
-router.get(
-    "/teacher/quiz/:quizId/results",
-    teacherController.viewQuizResults
-);
+/* GET → NO CSRF */
+router.get("/dashboard", teacherController.getDashboard);
+router.get("/quiz/:quizId/results", teacherController.viewQuizResults);
+
+/* POST → CSRF REQUIRED */
+router.post("/create-subject", teacherController.createSubject);
 router.post(
-    "/teacher/quiz/:quizId/publish-results",
+    "/quiz/:quizId/publish-results",
     teacherController.publishQuizResults
 );
 
