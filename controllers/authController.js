@@ -97,3 +97,27 @@ exports.postLogin = async (req, res, next) => {
     return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+// controllers/authController.js
+
+exports.logout = (req, res) => {
+  try {
+    if (!req.session) {
+      return res.status(200).json({ message: "Logged out" });
+    }
+
+    req.session.destroy((err) => {
+      if (err) {
+        console.error("Logout error:", err);
+        return res.status(500).json({ message: "Logout failed" });
+      }
+
+      // Clear cookie (IMPORTANT)
+      res.clearCookie("connect.sid"); // default express-session cookie name
+
+      return res.status(200).json({ message: "Logged out successfully" });
+    });
+  } catch (err) {
+    console.error("Logout exception:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};

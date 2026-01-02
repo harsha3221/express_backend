@@ -4,10 +4,12 @@ const db = require('./util/database.js');
 const authRoute = require('./routes/auth.js');
 const teacherRoute = require('./routes/teacher.js');
 const studentRoutes = require('./routes/student.js');
+const quizRoutes = require('./routes/quiz.js');
 const session = require("express-session");
 const MySQLStore = require('express-mysql-session')(session);
 const cors = require('cors');
 const csrf = require("csurf");
+const path = require("path");
 app.use(cors({
   origin: "http://localhost:3001",
   credentials: true
@@ -17,6 +19,7 @@ app.use(cors({
 
 app.use(express.json()); // parse application/json
 app.use(express.urlencoded({ extended: true })); // parse application/x-www-form-urlencoded
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // --- MySQL session store setup ---
 const sessionStore = new MySQLStore(
   {
@@ -46,26 +49,37 @@ app.use(session({
 }));
 
 // app.use((req, res, next) => {
-//     console.log('--- Session Debug ---');
-//     console.log('Session ID:', req.sessionID);
-//     console.log('Session Data:', req.session);
-//     console.log('---------------------\n');
-//     next(); // important! pass control to the next middleware/route
+//   console.log('--- Session Debug ---');
+//   console.log('Session ID:', req.sessionID);
+//   console.log('Session Data:', req.session);
+//   console.log('---------------------\n');
+//   next(); // important! pass control to the next middleware/route
 // });
 // --- CSRF protection middleware ---
-const csrfProtection = csrf({ cookie: false }); // using session
-app.use(authRoute);
-app.use(csrfProtection);
+const csrfProtection = csrf({
+  cookie: false,
+  ignoreMethods: ["GET", "HEAD", "OPTIONS"]
+});// using session
 
-// Route to send CSRF token to React
-app.get('/csrf-token', (req, res) => {
+app.use(authRoute);
+
+
+app.get('/csrf-token', csrfProtection, (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
 });
+app.use(csrfProtection);
+
+app.use('/quiz', quizRoutes);
+
+
+// Route to send CSRF token to React
+
 
 
 app.use(teacherRoute);
 
 app.use(studentRoutes);
+
 
 db.getConnection().then(result => {
 
