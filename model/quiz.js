@@ -20,21 +20,20 @@ class Quiz {
      * Rejects if overlapping quiz exists in 'active' or 'draft' state.
      */
     static async checkOverlap(subjectId, teacherId, startTime, endTime) {
-        const [rows] = await db.query(
-            `SELECT * FROM quizzes
-       WHERE subject_id = ? 
-         AND teacher_id = ?
-         AND status IN ('draft', 'active')
-         AND (
-              (start_time <= ? AND end_time >= ?) OR
-              (start_time <= ? AND end_time >= ?) OR
-              (? <= start_time AND ? >= end_time)
-         )`,
-            [subjectId, teacherId, startTime, startTime, endTime, endTime, startTime, endTime]
+        const [[row]] = await db.execute(
+            `SELECT 1
+     FROM quizzes
+     WHERE subject_id = ?
+       AND teacher_id = ?
+       AND status IN ('draft', 'active')
+       AND start_time < ?
+       AND end_time > ?
+     LIMIT 1`,
+            [subjectId, teacherId, endTime, startTime]
         );
-        return rows;
-    }
 
+        return !!row;
+    }
     /**
      * Fetches all quizzes created by a particular teacher, joined with subject details.
      */
@@ -159,6 +158,20 @@ class Quiz {
             `UPDATE quizzes SET results_published = 1 WHERE id = ?`,
             [quizId]
         );
+    }
+    static async getEvaluationData(conn, studentId, quizId) {
+        const [rows] = await conn.execute(
+            `SELECT q.id AS question_id, q.marks, 
+            o.id AS option_id, o.is_correct,
+            a.option_id AS answered_option
+     FROM questions q
+     LEFT JOIN options o ON q.id = o.question_id
+     LEFT JOIN student_quiz_answers a 
+            ON a.question_id = q.id AND a.student_id = ?
+     WHERE q.quiz_id = ?`,
+            [studentId, quizId]
+        );
+        return rows;
     }
 
 }

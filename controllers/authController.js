@@ -2,7 +2,7 @@ const User = require('../model/user');
 const bcrypt = require('bcrypt');
 const db = require('../util/database');
 const Teacher = require('../model/teacher.js');
-
+const Student = require('../model/student');
 exports.postSignup = async (req, res, next) => {
   try {
     const { name, email, password, confirmPassword, role, department, year } = req.body; // add role
@@ -46,40 +46,67 @@ exports.postSignup = async (req, res, next) => {
 };
 
 
-
 exports.postLogin = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    // 1. Check if user exists
+    // 1️⃣ Find user
     const [rows] = await User.findEmail(email);
     if (rows.length === 0) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
     const user = rows[0];
-    console.log(user);//just for debug purpose
 
-    // 2. Compare password
+    // 2️⃣ Compare password
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    // 🔑 Session establishment
     req.session.isLoggedIn = true;
-    // It's best practice to store data necessary for the app, like the user ID/name.
-    req.session.user = { id: user.id, name: user.name, email: user.email, role: user.role };
 
-    // 3. Save the session and respond *only within the callback*
+    // 3️⃣ Role-based identity attachment
+    if (user.role === "teacher") {
+
+      const [teacherRows] = await Teacher.findByUserId(user.id);
+
+      if (teacherRows.length === 0) {
+        return res.status(500).json({ message: "Teacher record not found" });
+      }
+
+      req.session.user = {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        teacher_id: teacherRows[0].teacher_id
+      };
+
+    } else if (user.role === "student") {
+
+      const [studentRows] = await Student.findByUserId(user.id);
+
+      if (studentRows.length === 0) {
+        return res.status(500).json({ message: "Student record not found" });
+      }
+
+      req.session.user = {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        student_id: studentRows[0].student_id
+      };
+    }
+
+    // 4️⃣ Save session
     req.session.save(err => {
       if (err) {
         console.error("Session save error:", err);
-        // Return 500 status on session save failure
         return res.status(500).json({ message: "Could not establish session" });
       }
 
-      // 4. Success: Send the response here, after the session is saved.
       return res.status(200).json({
         message: "Login successful",
         userId: user.id,
@@ -89,12 +116,9 @@ exports.postLogin = async (req, res, next) => {
       });
     });
 
-    // IMPORTANT: Do NOT place any 'return res.status' here.
-    // The return must be inside req.session.save() to ensure the cookie is sent.
-
   } catch (err) {
     console.error("Login error:", err.message);
-    return res.status(500).json({ message: "Server error", error: err.message });
+    return res.status(500).json({ message: "Server error" });
   }
 };
 // controllers/authController.js

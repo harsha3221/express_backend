@@ -19,7 +19,6 @@ app.use(
   })
 );
 
-/* ---------------- BODY ---------------- */
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
@@ -45,10 +44,21 @@ const csrfProtection = csrf({ cookie: false });
 /* ---------------- ROUTES ---------------- */
 app.use(authRoute);
 
-/* ✅ CSRF TOKEN (only when logged in) */
+
 app.get("/csrf-token", csrfProtection, (req, res) => {
   res.json({ csrfToken: req.csrfToken() });
 });
+app.get("/me", csrfProtection, (req, res) => {
+  if (!req.session.user) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+
+  res.json({
+    user: req.session.user,      // { id, role, name, ... }
+    csrfToken: req.csrfToken(),  // IMPORTANT
+  });
+});
+
 
 /* ✅ APPLY CSRF ONLY TO MUTATING ROUTES */
 app.use("/quiz", csrfProtection, quizRoutes);

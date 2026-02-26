@@ -151,7 +151,7 @@ exports.createQuiz = async (req, res) => {
 
         // 4️⃣ Check for overlapping quiz
         const overlappingQuizzes = await Quiz.checkOverlap(subject_id, teacherId, start_time, end_time);
-        if (overlappingQuizzes.length > 0) {
+        if (overlappingQuizzes) {
             return res.status(400).json({
                 message: 'Another quiz for this subject overlaps with the given time period.',
             });
@@ -313,46 +313,65 @@ exports.deleteQuizQuestion = async (req, res) => {
     }
 };
 exports.updateQuestion = async (req, res) => {
+    const conn = await db.getConnection();
+
     try {
+        if (!req.session.user || req.session.user.role !== "teacher") {
+            return res.status(403).json({ message: "Unauthorized access" });
+        }
+
         const { quizId, questionId } = req.params;
         const { question_text, marks, options } = req.body;
-        const parsedOptions = JSON.parse(options);
 
+        const parsedOptions = JSON.parse(options);
         let image_url = null;
 
         if (req.file) {
             image_url = "/uploads/question-images/" + req.file.filename;
         }
 
-        // Update question
-        await db.execute(
-            `
-      UPDATE questions
-      SET question_text = ?, marks = ?, image_url = COALESCE(?, image_url)
-      WHERE id = ? AND quiz_id = ?
-    `,
+        await conn.beginTransaction();
+
+        // 1️⃣ Update question
+        await conn.execute(
+            `UPDATE questions
+       SET question_text = ?, 
+           marks = ?, 
+           image_url = COALESCE(?, image_url)
+       WHERE id = ? AND quiz_id = ?`,
             [question_text, marks, image_url, questionId, quizId]
         );
 
-        // Delete old options
-        await db.execute(`DELETE FROM options WHERE question_id = ?`, [
-            questionId,
-        ]);
+        // 2️⃣ Delete old options
+        await conn.execute(
+            `DELETE FROM options WHERE question_id = ?`,
+            [questionId]
+        );
 
-        // Insert updated options
-        for (let opt of parsedOptions) {
-            await db.execute(
-                `
-        INSERT INTO options (question_id, option_text, is_correct)
-        VALUES (?, ?, ?)
-      `,
-                [questionId, opt.option_text, opt.is_correct]
+        // 3️⃣ Insert new options (Bulk Insert)
+        if (parsedOptions.length > 0) {
+            const values = parsedOptions.map(opt => [
+                questionId,
+                opt.option_text,
+                opt.is_correct ? 1 : 0
+            ]);
+
+            await conn.query(
+                `INSERT INTO options (question_id, option_text, is_correct)
+         VALUES ?`,
+                [values]
             );
         }
 
+        await conn.commit();
+
         res.json({ message: "Question updated successfully" });
+
     } catch (error) {
+        await conn.rollback();
         console.error("Error updating question:", error);
         res.status(500).json({ message: "Failed to update question" });
+    } finally {
+        conn.release();
     }
 };

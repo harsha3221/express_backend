@@ -62,6 +62,30 @@ class QuizResult {
         );
         return rows;
     }
+    static async upsertResultWithTransaction(conn, studentId, quizId, total, obtained) {
+
+        const [existing] = await conn.execute(
+            `SELECT id FROM quiz_results 
+     WHERE student_id = ? AND quiz_id = ?`,
+            [studentId, quizId]
+        );
+
+        if (existing.length > 0) {
+            await conn.execute(
+                `UPDATE quiz_results 
+       SET total_marks=?, obtained_marks=?, evaluated_at=NOW()
+       WHERE id=?`,
+                [total, obtained, existing[0].id]
+            );
+        } else {
+            await conn.execute(
+                `INSERT INTO quiz_results 
+       (student_id, quiz_id, total_marks, obtained_marks) 
+       VALUES (?, ?, ?, ?)`,
+                [studentId, quizId, total, obtained]
+            );
+        }
+    }
 }
 
 module.exports = QuizResult;
