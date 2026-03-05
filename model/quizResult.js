@@ -86,6 +86,16 @@ class QuizResult {
             );
         }
     }
+    static async getStudentResult(studentId, quizId) {
+        const [rows] = await db.execute(
+            `SELECT obtained_marks, total_marks, evaluated_at
+     FROM quiz_results
+     WHERE student_id = ? AND quiz_id = ?`,
+            [studentId, quizId]
+        );
+
+        return rows[0];
+    }
 }
 
 module.exports = QuizResult;

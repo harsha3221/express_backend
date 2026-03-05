@@ -52,6 +52,14 @@ class Student {
       WHERE student_id = ? AND subject_id = ?
     `;
     return db.execute(query, [studentId, subjectId]);
+  }//i think this can be removed once should be verified before remvoing 
+  static async isEnrolled(studentId, subjectId) {
+    const [rows] = await db.execute(
+      `SELECT 1 FROM student_subject
+     WHERE student_id = ? AND subject_id = ?`,
+      [studentId, subjectId]
+    );
+    return rows.length > 0;
   }
 }
 

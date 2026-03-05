@@ -3,11 +3,11 @@
 const Student = require('../model/student');
 const Subject = require('../model/subject');
 const Quiz = require('../model/quiz');
-const db = require('../util/database');
+// const db = require('../util/database');
 const Question = require('../model/question');
 const StudentQuizAttempt = require('../model/studentQuizAttempt');
 const QuizResult = require('../model/quizResult.js');
-
+const StudentAnswer = require('../model/studentAnswer');
 
 /* ============================================================
    Utility: Shuffle
@@ -26,29 +26,14 @@ function shuffleArray(arr) {
    Helper: Ensure Enrollment
 ============================================================ */
 async function ensureStudentAndEnrollment(studentId, quizId) {
+  const quiz = await Quiz.getQuizWithSubjectAndTeacher(quizId);
 
-  const [quizRows] = await db.execute(
-    `SELECT q.*, s.id AS subject_id, u.name AS teacher_name
-     FROM quizzes q
-     JOIN subjects s ON q.subject_id = s.id
-     JOIN teachers t ON q.teacher_id = t.id
-     JOIN users u ON t.user_id = u.id
-     WHERE q.id = ?`,
-    [quizId]
-  );
-
-  if (quizRows.length === 0)
+  if (!quiz)
     throw { code: 404, message: "Quiz not found" };
 
-  const quiz = quizRows[0];
+  const enrolled = await Student.isEnrolled(studentId, quiz.subject_id);
 
-  const [enrolledRows] = await db.execute(
-    `SELECT 1 FROM student_subject 
-     WHERE student_id = ? AND subject_id = ?`,
-    [studentId, quiz.subject_id]
-  );
-
-  if (enrolledRows.length === 0)
+  if (!enrolled)
     throw { code: 403, message: "Student not enrolled in this subject" };
 
   return { quiz };
@@ -173,33 +158,10 @@ exports.getSubjectQuizzes = async (req, res) => {
     const studentId = req.session.user.student_id;
     const subjectId = Number(req.params.subjectId);
 
-    const query = `
-      SELECT 
-        q.id AS quiz_id,
-        q.title,
-        q.description,
-        q.duration_minutes,
-        q.start_time,
-        q.end_time,
-        q.status,
-        q.results_published,
-        q.created_at,
-        t.id AS teacher_id,
-        u.name AS teacher_name,
-        a.submitted IS NOT NULL AS attempted,
-        COALESCE(a.submitted,0) AS submitted
-      FROM quizzes q
-      JOIN subjects s ON q.subject_id = s.id
-      JOIN teachers t ON q.teacher_id = t.id
-      JOIN users u ON t.user_id = u.id
-      JOIN student_subject ss ON ss.subject_id = s.id
-      LEFT JOIN student_quiz_attempts a 
-          ON a.quiz_id = q.id AND a.student_id = ?
-      WHERE s.id = ? AND ss.student_id = ?
-      ORDER BY q.start_time DESC
-    `;
-
-    const [rows] = await db.execute(query, [studentId, subjectId, studentId]);
+    const rows = await Quiz.getQuizzesForStudentSubject(
+      subjectId,
+      studentId
+    );
 
     res.status(200).json({
       quizzes: rows.map(r => ({
@@ -211,7 +173,10 @@ exports.getSubjectQuizzes = async (req, res) => {
         end_time: r.end_time,
         status: r.status || "draft",
         results_published: !!r.results_published,
-        teacher: { id: r.teacher_id, name: r.teacher_name },
+        teacher: {
+          id: r.teacher_id,
+          name: r.teacher_name
+        },
         created_at: r.created_at,
         attempted: !!r.attempted,
         submitted: !!r.submitted
@@ -223,7 +188,6 @@ exports.getSubjectQuizzes = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 /* ============================================================
    START QUIZ
@@ -249,6 +213,7 @@ exports.startQuizForStudent = async (req, res) => {
 
     const rows = await Question.getByQuizId(quizId);
 
+    // Build question map
     const map = new Map();
     for (const r of rows) {
       if (!map.has(r.question_id)) {
@@ -260,6 +225,7 @@ exports.startQuizForStudent = async (req, res) => {
           options: []
         });
       }
+
       if (r.option_id) {
         map.get(r.question_id).options.push({
           id: r.option_id,
@@ -269,18 +235,15 @@ exports.startQuizForStudent = async (req, res) => {
       }
     }
 
+    // Shuffle
     let questions = shuffleArray(Array.from(map.values()));
     questions = questions.map(q => ({
       ...q,
       options: shuffleArray(q.options)
     }));
 
-    const [answers] = await db.execute(
-      `SELECT question_id, option_id
-       FROM student_quiz_answers
-       WHERE student_id = ? AND quiz_id = ?`,
-      [studentId, quizId]
-    );
+    // ✅ Now clean — no raw SQL
+    const answers = await StudentAnswer.getAnswers(studentId, quizId);
 
     res.json({
       quiz,
@@ -314,35 +277,22 @@ exports.saveStudentAnswer = async (req, res) => {
     const { quiz } = await ensureStudentAndEnrollment(studentId, quizId);
 
     const now = new Date();
+
     if (quiz.start_time && new Date(quiz.start_time) > now)
       return res.status(403).json({ message: "Quiz not started" });
 
     if (quiz.end_time && new Date(quiz.end_time) < now)
       return res.status(403).json({ message: "Quiz ended" });
 
-    await db.execute(
-      `DELETE FROM student_quiz_answers
-       WHERE student_id = ? AND quiz_id = ? AND question_id = ?`,
-      [studentId, quizId, question_id]
-    );
-
     const ids = option_ids || (option_id ? [option_id] : []);
 
-    if (ids.length > 0) {
-      const values = ids.map(oid => [
-        studentId,
-        quizId,
-        question_id,
-        oid
-      ]);
-
-      await db.query(
-        `INSERT INTO student_quiz_answers
-         (student_id, quiz_id, question_id, option_id)
-         VALUES ?`,
-        [values]
-      );
-    }
+    // ✅ clean call — no SQL here
+    await StudentAnswer.replaceAnswers(
+      studentId,
+      quizId,
+      question_id,
+      ids
+    );
 
     res.json({ message: "Saved" });
 
@@ -466,11 +416,9 @@ exports.getStudentQuizResult = async (req, res) => {
     if (!published)
       return res.status(403).json({ message: "Results not published yet" });
 
-    const [[result]] = await db.execute(
-      `SELECT obtained_marks, total_marks, evaluated_at
-       FROM quiz_results
-       WHERE student_id = ? AND quiz_id = ?`,
-      [studentId, quizId]
+    const result = await QuizResult.getStudentResult(
+      studentId,
+      quizId
     );
 
     if (!result)

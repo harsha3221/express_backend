@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const teacherController = require("../controllers/teacherController");
 
-/* GET → NO CSRF */
+
 router.get("/dashboard", teacherController.getDashboard);
 router.get("/quiz/:quizId/results", teacherController.viewQuizResults);
 

@@ -10,5 +10,7 @@ const {
 router.post("/signup", validateSignup, authController.postSignup);
 router.post("/login", validateLogin, authController.postLogin);
 router.post("/logout", authController.logout);
+router.get("/verify", authController.verifyEmail);
+router.post("/resend-verification", authController.resendVerification);
 
 module.exports = router;
