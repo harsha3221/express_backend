@@ -1,5 +1,5 @@
 // model/studentAnswer.js
-const db = require("../util/database");
+const db = require("../config/database");
 
 class StudentAnswer {
 

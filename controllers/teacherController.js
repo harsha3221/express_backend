@@ -5,7 +5,7 @@ const QuizResult = require('../model/quizResult.js');
 /* ============================================================
    GET TEACHER DASHBOARD
 ============================================================ */
-exports.getDashboard = async (req, res) => {
+exports.getDashboard = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== 'teacher') {
             return res.status(403).json({ message: 'Unauthorized' });
@@ -24,8 +24,7 @@ exports.getDashboard = async (req, res) => {
         });
 
     } catch (err) {
-        console.error("Dashboard error:", err.message);
-        res.status(500).json({ message: 'Server error' });
+        next(err);
     }
 };
 
@@ -33,7 +32,7 @@ exports.getDashboard = async (req, res) => {
 /* ============================================================
    CREATE SUBJECT
 ============================================================ */
-exports.createSubject = async (req, res) => {
+exports.createSubject = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== 'teacher') {
             return res.status(403).json({ message: 'Unauthorized access' });
@@ -69,15 +68,7 @@ exports.createSubject = async (req, res) => {
         });
 
     } catch (err) {
-        console.error('Create subject error:', err.message);
-
-        if (err.code === 'ER_DUP_ENTRY') {
-            return res.status(409).json({
-                message: 'You have already created a subject with this code.'
-            });
-        }
-
-        return res.status(500).json({ message: 'Server error' });
+        next(err);
     }
 };
 
@@ -85,7 +76,7 @@ exports.createSubject = async (req, res) => {
 /* ============================================================
    VIEW QUIZ RESULTS
 ============================================================ */
-exports.viewQuizResults = async (req, res) => {
+exports.viewQuizResults = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== "teacher") {
             return res.status(403).json({ message: "Unauthorized" });
@@ -127,8 +118,7 @@ exports.viewQuizResults = async (req, res) => {
         });
 
     } catch (err) {
-        console.error("View results error:", err);
-        res.status(500).json({ message: "Server error" });
+        next(err);
     }
 };
 
@@ -136,7 +126,7 @@ exports.viewQuizResults = async (req, res) => {
 /* ============================================================
    PUBLISH QUIZ RESULTS
 ============================================================ */
-exports.publishQuizResults = async (req, res) => {
+exports.publishQuizResults = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== "teacher") {
             return res.status(403).json({ message: "Unauthorized" });
@@ -155,7 +145,6 @@ exports.publishQuizResults = async (req, res) => {
         res.json({ message: "Results published successfully" });
 
     } catch (err) {
-        console.error("Publish results error:", err);
-        res.status(500).json({ message: "Server error" });
+        next(err);
     }
 };

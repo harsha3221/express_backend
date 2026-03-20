@@ -1,5 +1,5 @@
 // model/question.js
-const db = require("../util/database");
+const db = require("../config/database");
 
 class Question {
     // Create one question + its options
@@ -76,6 +76,51 @@ class Question {
             [questionId]
         );
         return rows;
+    }
+
+    static async updateQuestion(quizId, questionId, questionText, marks, options, imageUrl) {
+        const conn = await db.getConnection();
+        try {
+            await conn.beginTransaction();
+
+            // 1️⃣ Update question
+            await conn.execute(
+                `UPDATE questions
+           SET question_text = ?, 
+               marks = ?, 
+               image_url = COALESCE(?, image_url)
+           WHERE id = ? AND quiz_id = ?`,
+                [questionText, marks, imageUrl, questionId, quizId]
+            );
+
+            // 2️⃣ Delete old options
+            await conn.execute(
+                `DELETE FROM options WHERE question_id = ?`,
+                [questionId]
+            );
+
+            // 3️⃣ Insert new options (Bulk Insert)
+            if (options && options.length > 0) {
+                const values = options.map(opt => [
+                    questionId,
+                    opt.option_text,
+                    opt.is_correct ? 1 : 0
+                ]);
+
+                await conn.query(
+                    `INSERT INTO options (question_id, option_text, is_correct)
+             VALUES ?`,
+                    [values]
+                );
+            }
+
+            await conn.commit();
+        } catch (error) {
+            await conn.rollback();
+            throw error;
+        } finally {
+            conn.release();
+        }
     }
 
 }

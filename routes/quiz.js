@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const quizController = require('../controllers/quizController');
-const uploadQuestionImage = require("../middleware/upload.js");
+const uploadQuestionImage = require("../middlewares/upload.js");
 
 /* QUIZ CREATION + FETCHING                               */
 

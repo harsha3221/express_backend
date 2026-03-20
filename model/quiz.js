@@ -1,4 +1,4 @@
-const db = require("../util/database");
+const db = require("../config/database");
 
 class Quiz {
     /**
@@ -287,61 +287,20 @@ class Quiz {
 
         return insertValues;
     }
-    static computeBulkResults(rows, quizId) {
+    static async insertBulkResults(insertValues) {
+        if (!insertValues || insertValues.length === 0) return;
 
-        const evaluationMap = new Map();
-
-        rows.forEach(r => {
-            if (!evaluationMap.has(r.student_id)) {
-                evaluationMap.set(r.student_id, new Map());
-            }
-
-            const studentMap = evaluationMap.get(r.student_id);
-
-            if (!studentMap.has(r.question_id)) {
-                studentMap.set(r.question_id, {
-                    marks: r.marks,
-                    correct: new Set(),
-                    selected: new Set()
-                });
-            }
-
-            const qData = studentMap.get(r.question_id);
-
-            if (r.is_correct) qData.correct.add(r.option_id);
-            if (r.answered_option) qData.selected.add(r.answered_option);
-        });
-
-        const insertValues = [];
-
-        evaluationMap.forEach((questions, studentId) => {
-            let totalMarks = 0;
-            let obtainedMarks = 0;
-
-            questions.forEach(q => {
-                totalMarks += q.marks;
-
-                const isCorrect =
-                    q.correct.size === q.selected.size &&
-                    [...q.correct].every(id => q.selected.has(id));
-
-                if (isCorrect) obtainedMarks += q.marks;
-            });
-
-            insertValues.push([
-                studentId,
-                quizId,
-                totalMarks,
-                obtainedMarks,
-                new Date()
-            ]);
-        });
-
-        return insertValues;
+        return db.query(
+            `INSERT INTO quiz_results (student_id, quiz_id, total_marks, obtained_marks, evaluated_at)
+             VALUES ?
+             ON DUPLICATE KEY UPDATE 
+               total_marks = VALUES(total_marks), 
+               obtained_marks = VALUES(obtained_marks), 
+               evaluated_at = VALUES(evaluated_at)`,
+            [insertValues]
+        );
     }
 
 }
-
-
 
 module.exports = Quiz;

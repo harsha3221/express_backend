@@ -1,4 +1,4 @@
-const db = require("../util/database");
+const db = require("../config/database");
 
 class QuizResult {
     static async getSubmittedStudents(quizId) {
@@ -84,6 +84,64 @@ class QuizResult {
        VALUES (?, ?, ?, ?)`,
                 [studentId, quizId, total, obtained]
             );
+        }
+    }
+
+    static async evaluateAndSubmit(studentId, quizId) {
+        const conn = await db.getConnection();
+        try {
+            await conn.beginTransaction();
+
+            const [rows] = await conn.execute(
+                `SELECT q.id AS question_id, q.marks, 
+                o.id AS option_id, o.is_correct,
+                a.option_id AS answered_option
+         FROM questions q
+         LEFT JOIN options o ON q.id = o.question_id
+         LEFT JOIN student_quiz_answers a 
+                ON a.question_id = q.id AND a.student_id = ?
+         WHERE q.quiz_id = ?`,
+                [studentId, quizId]
+            );
+
+            const byQuestion = {};
+            rows.forEach(r => {
+                if (!byQuestion[r.question_id])
+                    byQuestion[r.question_id] = {
+                        marks: r.marks || 0,
+                        correct: new Set(),
+                        ans: r.answered_option
+                    };
+
+                if (r.is_correct)
+                    byQuestion[r.question_id].correct.add(r.option_id);
+            });
+
+            let total = 0, obtained = 0;
+
+            for (let qid of Object.keys(byQuestion)) {
+                const q = byQuestion[qid];
+                total += q.marks;
+                if (q.ans && q.correct.has(q.ans))
+                    obtained += q.marks;
+            }
+
+            await this.upsertResultWithTransaction(conn, studentId, quizId, total, obtained);
+
+            await conn.execute(
+                `UPDATE student_quiz_attempts
+                 SET submitted = 1
+                 WHERE student_id = ? AND quiz_id = ?`,
+                [studentId, quizId]
+            );
+
+            await conn.commit();
+            return { total, obtained };
+        } catch (err) {
+            await conn.rollback();
+            throw err;
+        } finally {
+            conn.release();
         }
     }
     static async getStudentResult(studentId, quizId) {

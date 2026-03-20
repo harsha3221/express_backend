@@ -1,9 +1,10 @@
 const Quiz = require('../model/quiz');
 const Teacher = require('../model/teacher');
 const Question = require("../model/question");
+const { uploadToCloudinary, deleteFromCloudinary } = require("../services/imageService");
 const fs = require("fs");
 const path = require("path");
-const db = require('../util/database');
+const db = require('../config/database');
 //this is the helper function to deal with the unwanted access ,can be removed 
 async function ensureQuizBelongsToTeacher(quizId, userId) {
     const [teacherRows] = await Teacher.findByUserId(userId);
@@ -24,7 +25,7 @@ async function ensureQuizBelongsToTeacher(quizId, userId) {
 
     return { teacherId, quiz };
 }
-exports.getQuizQuestions = async (req, res) => {
+exports.getQuizQuestions = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== "teacher") {
             return res.status(403).json({ message: "Unauthorized access" });
@@ -62,12 +63,11 @@ exports.getQuizQuestions = async (req, res) => {
 
         res.status(200).json({ questions });
     } catch (err) {
-        console.error("Error fetching quiz questions:", err);
-        res.status(500).json({ message: err.message || "Server error" });
+        next(err);
     }
 };
 
-exports.addQuizQuestion = async (req, res) => {
+exports.addQuizQuestion = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== "teacher") {
             return res.status(403).json({ message: "Unauthorized access" });
@@ -97,9 +97,10 @@ exports.addQuizQuestion = async (req, res) => {
 
         const m = Number(marks) || 1;
 
-        const imageUrl = req.file
-            ? `/uploads/question-images/${req.file.filename}`
-            : null;
+        let imageUrl = null;
+        if (req.file) {
+            imageUrl = await uploadToCloudinary(req.file.path, 'quiz_questions');
+        }
 
         const { questionId } = await Question.createWithOptions(
             quizId,
@@ -114,13 +115,12 @@ exports.addQuizQuestion = async (req, res) => {
             question_id: questionId,
         });
     } catch (err) {
-        console.error("Error adding quiz question:", err);
-        res.status(500).json({ message: err.message || "Server error" });
+        next(err);
     }
 };
 
 
-exports.createQuiz = async (req, res) => {
+exports.createQuiz = async (req, res, next) => {
     try {
         // 1️⃣ Check session and role
         if (!req.session.user || req.session.user.role !== 'teacher') {
@@ -173,13 +173,12 @@ exports.createQuiz = async (req, res) => {
             quiz_id: result.insertId,
         });
     } catch (err) {
-        console.error('Error creating quiz:', err);
-        res.status(500).json({ message: 'Server error', error: err.message });
+        next(err);
     }
 };
 
 // ✅ Get all quizzes for the logged-in teacher
-exports.getTeacherQuizzes = async (req, res) => {
+exports.getTeacherQuizzes = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== 'teacher') {
             return res.status(403).json({ message: 'Unauthorized access' });
@@ -196,11 +195,10 @@ exports.getTeacherQuizzes = async (req, res) => {
 
         res.status(200).json({ quizzes });
     } catch (err) {
-        console.error('Error fetching quizzes:', err);
-        res.status(500).json({ message: 'Server error', error: err.message });
+        next(err);
     }
 };
-exports.getQuizzesBySubjectForTeacher = async (req, res) => {
+exports.getQuizzesBySubjectForTeacher = async (req, res, next) => {
     try {
         // 1. Ensure logged-in teacher
         if (!req.session.user || req.session.user.role !== 'teacher') {
@@ -227,13 +225,12 @@ exports.getQuizzesBySubjectForTeacher = async (req, res) => {
             quizzes,
         });
     } catch (err) {
-        console.error('Error fetching quizzes by subject:', err);
-        res.status(500).json({ message: 'Server error', error: err.message });
+        next(err);
     }
 };
 
 // ✅ Get single quiz details
-exports.getQuizById = async (req, res) => {
+exports.getQuizById = async (req, res, next) => {
     try {
         const quizId = req.params.id;
         const [quizRows] = await Quiz.findById(quizId);
@@ -244,13 +241,12 @@ exports.getQuizById = async (req, res) => {
 
         res.status(200).json({ quiz: quizRows[0] });
     } catch (err) {
-        console.error('Error fetching quiz:', err);
-        res.status(500).json({ message: 'Server error', error: err.message });
+        next(err);
     }
 };
 
 // ✅ Update quiz status (e.g., activate or complete quiz)
-exports.updateQuizStatus = async (req, res) => {
+exports.updateQuizStatus = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== 'teacher') {
             return res.status(403).json({ message: 'Unauthorized access' });
@@ -266,13 +262,12 @@ exports.updateQuizStatus = async (req, res) => {
         await Quiz.updateStatus(quiz_id, status);
         res.status(200).json({ message: `Quiz status updated to '${status}'` });
     } catch (err) {
-        console.error('Error updating quiz status:', err);
-        res.status(500).json({ message: 'Server error', error: err.message });
+        next(err);
     }
 };
 
 // ✅ Delete a quiz
-exports.deleteQuizQuestion = async (req, res) => {
+exports.deleteQuizQuestion = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== "teacher") {
             return res.status(403).json({ message: "Unauthorized access" });
@@ -294,27 +289,20 @@ exports.deleteQuizQuestion = async (req, res) => {
             if (row.option_image) imagePaths.add(row.option_image);
         });
 
-        // 2️⃣ Delete files safely
-        imagePaths.forEach((imgPath) => {
-            const fullPath = path.join(__dirname, "..", imgPath.replace(/^\//, ""));
-            fs.unlink(fullPath, (err) => {
-                if (err) console.log("⚠️ Could not delete:", fullPath, err.message);
-                else console.log("🗑 Deleted image:", fullPath);
-            });
-        });
+        // 2️⃣ Delete files safely from Cloudinary
+        for (const imgUrl of imagePaths) {
+            await deleteFromCloudinary(imgUrl);
+        }
 
         // 3️⃣ Delete from DB
         await Question.deleteById(questionId);
 
         res.status(200).json({ message: "Question deleted successfully" });
     } catch (err) {
-        console.error("Error deleting question:", err);
-        res.status(500).json({ message: err.message || "Server error" });
+        next(err);
     }
 };
-exports.updateQuestion = async (req, res) => {
-    const conn = await db.getConnection();
-
+exports.updateQuestion = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== "teacher") {
             return res.status(403).json({ message: "Unauthorized access" });
@@ -327,51 +315,14 @@ exports.updateQuestion = async (req, res) => {
         let image_url = null;
 
         if (req.file) {
-            image_url = "/uploads/question-images/" + req.file.filename;
+            image_url = await uploadToCloudinary(req.file.path, 'quiz_questions');
         }
 
-        await conn.beginTransaction();
-
-        // 1️⃣ Update question
-        await conn.execute(
-            `UPDATE questions
-       SET question_text = ?, 
-           marks = ?, 
-           image_url = COALESCE(?, image_url)
-       WHERE id = ? AND quiz_id = ?`,
-            [question_text, marks, image_url, questionId, quizId]
-        );
-
-        // 2️⃣ Delete old options
-        await conn.execute(
-            `DELETE FROM options WHERE question_id = ?`,
-            [questionId]
-        );
-
-        // 3️⃣ Insert new options (Bulk Insert)
-        if (parsedOptions.length > 0) {
-            const values = parsedOptions.map(opt => [
-                questionId,
-                opt.option_text,
-                opt.is_correct ? 1 : 0
-            ]);
-
-            await conn.query(
-                `INSERT INTO options (question_id, option_text, is_correct)
-         VALUES ?`,
-                [values]
-            );
-        }
-
-        await conn.commit();
+        await Question.updateQuestion(quizId, questionId, question_text, marks, parsedOptions, image_url);
 
         res.json({ message: "Question updated successfully" });
 
-    } catch (error) {
-        await conn.rollback();
-        console.error("Error updating question:", error);
-        res.status(500).json({ message: "Failed to update question" });
-    } finally {
-        conn.release();
+    } catch (err) {
+        next(err);
     }
 };

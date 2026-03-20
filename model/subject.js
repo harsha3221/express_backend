@@ -1,4 +1,4 @@
-const db = require('../util/database.js');
+const db = require('../config/database');
 
 class Subject {
   constructor(teacher_id, name, code, description, semester) {

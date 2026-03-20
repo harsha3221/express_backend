@@ -1,7 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const app = express();
-const db = require("./util/database");
+const db = require("./config/database");
 const authRoute = require("./routes/auth");
 const teacherRoute = require("./routes/teacher");
 const studentRoutes = require("./routes/student");
@@ -23,19 +23,22 @@ app.use(
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use(express.urlencoded({ extended: true }));
 
 /* ---------------- SESSION ---------------- */
 const sessionStore = new MySQLStore({}, db.db);
 
 app.use(
   session({
-    secret: "my secret",
+    secret: process.env.SESSION_SECRET || "fallback_secret_do_not_use_in_prod",
     resave: false,
     saveUninitialized: false,
     store: sessionStore,
     cookie: {
-      maxAge: 1000 * 60 * 60,
+      maxAge: 1000 * 60 * 60, // 1 hour
+      httpOnly: true, // Prevents client-side JS from reading the cookie
+      sameSite: 'strict', // Prevents CSRF
+      secure: process.env.NODE_ENV === 'production', // Requires HTTPS in production
     },
   })
 );
@@ -66,6 +69,10 @@ app.get("/me", csrfProtection, (req, res) => {
 app.use("/quiz", csrfProtection, quizRoutes);
 app.use("/teacher", csrfProtection, teacherRoute);
 app.use("/student", csrfProtection, studentRoutes);
+
+/* -------------- ERROR HANDLER ------------- */
+const errorHandler = require("./middlewares/errorHandler");
+app.use(errorHandler);
 
 /* ---------------- SERVER ---------------- */
 db.getConnection()

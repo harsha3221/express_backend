@@ -1,6 +1,5 @@
 const User = require('../model/user');
 const bcrypt = require('bcrypt');
-const db = require('../util/database');
 const Teacher = require('../model/teacher.js');
 const Student = require('../model/student');
 const crypto = require('crypto');
@@ -9,7 +8,7 @@ const emailService = require('../services/emailService');
 /* =========================================================
    SIGNUP
 ========================================================= */
-exports.postSignup = async (req, res) => {
+exports.postSignup = async (req, res, next) => {
   try {
     const { name, email, password, confirmPassword, role, department, year } = req.body;
 
@@ -52,10 +51,8 @@ exports.postSignup = async (req, res) => {
       const teacher = new Teacher(userId, department);
       await teacher.insert();
     } else {
-      await db.execute(
-        "INSERT INTO students (user_id, roll_number, year) VALUES (?, ?, ?)",
-        [userId, null, year]
-      );
+      const student = new Student(userId, null, year);
+      await student.insert();
     }
 
     const verificationLink = `${process.env.BASE_URL}/verify?token=${rawToken}`;
@@ -66,8 +63,7 @@ exports.postSignup = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Signup error:", err);
-    return res.status(500).json({ message: "Server error" });
+    next(err);
   }
 };
 
@@ -75,7 +71,7 @@ exports.postSignup = async (req, res) => {
 /* =========================================================
    VERIFY EMAIL (TIMEZONE SAFE)
 ========================================================= */
-exports.verifyEmail = async (req, res) => {
+exports.verifyEmail = async (req, res, next) => {
   try {
     const { token } = req.query;
 
@@ -85,12 +81,7 @@ exports.verifyEmail = async (req, res) => {
 
     const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
-    const [rows] = await db.execute(
-      `SELECT id, verification_token_expiry 
-       FROM users 
-       WHERE verification_token = ?`,
-      [hashedToken]
-    );
+    const [rows] = await User.findByVerificationToken(hashedToken);
 
     if (rows.length === 0) {
       return res.redirect(`${process.env.FRONTEND_URL}/verification-failed`);
@@ -103,20 +94,12 @@ exports.verifyEmail = async (req, res) => {
       return res.redirect(`${process.env.FRONTEND_URL}/verification-failed`);
     }
 
-    await db.execute(
-      `UPDATE users
-       SET is_verified = TRUE,
-           verification_token = NULL,
-           verification_token_expiry = NULL
-       WHERE id = ?`,
-      [rows[0].id]
-    );
+    await User.verifyUser(rows[0].id);
 
     return res.redirect(`${process.env.FRONTEND_URL}/verification-success`);
 
   } catch (err) {
-    console.error("Verify email error:", err);
-    return res.redirect(`${process.env.FRONTEND_URL}/verification-failed`);
+    next(err);
   }
 };
 
@@ -124,7 +107,7 @@ exports.verifyEmail = async (req, res) => {
 /* =========================================================
    RESEND VERIFICATION (FIXED TIMEZONE)
 ========================================================= */
-exports.resendVerification = async (req, res) => {
+exports.resendVerification = async (req, res, next) => {
   try {
     const { email } = req.body;
 
@@ -151,13 +134,7 @@ exports.resendVerification = async (req, res) => {
     const expiryDate = new Date(Date.now() + expiryMinutes * 60 * 1000);
 
     // ✅ Pass Date directly
-    await db.execute(
-      `UPDATE users
-       SET verification_token = ?,
-           verification_token_expiry = ?
-       WHERE id = ?`,
-      [hashedToken, expiryDate, user.id]
-    );
+    await User.updateVerificationToken(user.id, hashedToken, expiryDate);
 
     const verificationLink = `${process.env.BASE_URL}/verify?token=${rawToken}`;
     await emailService.sendVerificationEmail(email, verificationLink);
@@ -168,7 +145,10 @@ exports.resendVerification = async (req, res) => {
 
   } catch (err) {
     console.error("Resend verification error:", err);
-    return res.status(500).json({ message: "Server error" });
+    return res.status(500).json({
+      message: err.message
+    });
+    next(err);
   }
 };
 
@@ -176,7 +156,7 @@ exports.resendVerification = async (req, res) => {
 /* =========================================================
    LOGIN
 ========================================================= */
-exports.postLogin = async (req, res) => {
+exports.postLogin = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
@@ -233,8 +213,7 @@ exports.postLogin = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Login error:", err.message);
-    return res.status(500).json({ message: "Server error" });
+    next(err);
   }
 };
 
@@ -242,7 +221,7 @@ exports.postLogin = async (req, res) => {
 /* =========================================================
    LOGOUT
 ========================================================= */
-exports.logout = (req, res) => {
+exports.logout = (req, res, next) => {
   req.session.destroy(() => {
     res.clearCookie("connect.sid");
     res.status(200).json({ message: "Logged out successfully" });

@@ -3,7 +3,7 @@
 const Student = require('../model/student');
 const Subject = require('../model/subject');
 const Quiz = require('../model/quiz');
-// const db = require('../util/database');
+// const db = require('../config/database');
 const Question = require('../model/question');
 const StudentQuizAttempt = require('../model/studentQuizAttempt');
 const QuizResult = require('../model/quizResult.js');
@@ -43,7 +43,7 @@ async function ensureStudentAndEnrollment(studentId, quizId) {
 /* ============================================================
    CREATE ATTEMPT
 ============================================================ */
-exports.createQuizAttempt = async (req, res) => {
+exports.createQuizAttempt = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== "student")
       return res.status(403).json({ message: "Unauthorized" });
@@ -61,8 +61,7 @@ exports.createQuizAttempt = async (req, res) => {
     res.json({ message: "Attempt created", attempt });
 
   } catch (err) {
-    console.error("createQuizAttempt error:", err);
-    res.status(err.code || 500).json({ message: err.message });
+    next(err);
   }
 };
 
@@ -70,7 +69,7 @@ exports.createQuizAttempt = async (req, res) => {
 /* ============================================================
    DASHBOARD
 ============================================================ */
-exports.getRegisteredCourses = async (req, res) => {
+exports.getRegisteredCourses = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
       return res.status(403).json({ message: 'Unauthorized access' });
@@ -90,15 +89,14 @@ exports.getRegisteredCourses = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Dashboard fetch error:", err);
-    res.status(500).json({ message: 'Server error' });
+    next(err);
   }
 };
 
 /* ============================================================
    AVAILABLE COURSES
 ============================================================ */
-exports.getAvailableCourses = async (req, res) => {
+exports.getAvailableCourses = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
       return res.status(403).json({ message: 'Unauthorized access' });
@@ -111,8 +109,7 @@ exports.getAvailableCourses = async (req, res) => {
     res.status(200).json({ availableSubjects, joinedSubjects });
 
   } catch (err) {
-    console.error("Available courses fetch error:", err);
-    res.status(500).json({ message: 'Server error' });
+    next(err);
   }
 };
 
@@ -120,7 +117,7 @@ exports.getAvailableCourses = async (req, res) => {
 /* ============================================================
    JOIN SUBJECT
 ============================================================ */
-exports.joinSubject = async (req, res) => {
+exports.joinSubject = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
       return res.status(403).json({ message: 'Unauthorized access' });
@@ -141,8 +138,7 @@ exports.joinSubject = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Join subject error:", err);
-    res.status(500).json({ message: 'Server error' });
+    next(err);
   }
 };
 
@@ -150,7 +146,7 @@ exports.joinSubject = async (req, res) => {
 /* ============================================================
    GET SUBJECT QUIZZES
 ============================================================ */
-exports.getSubjectQuizzes = async (req, res) => {
+exports.getSubjectQuizzes = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
       return res.status(403).json({ message: 'Unauthorized access' });
@@ -184,15 +180,14 @@ exports.getSubjectQuizzes = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Error fetching quizzes:", err);
-    res.status(500).json({ message: "Server error" });
+    next(err);
   }
 };
 
 /* ============================================================
    START QUIZ
 ============================================================ */
-exports.startQuizForStudent = async (req, res) => {
+exports.startQuizForStudent = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
       return res.status(403).json({ message: "Unauthorized" });
@@ -256,8 +251,7 @@ exports.startQuizForStudent = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("startQuizForStudent:", err);
-    res.status(err.code || 500).json({ message: err.message });
+    next(err);
   }
 };
 
@@ -265,7 +259,7 @@ exports.startQuizForStudent = async (req, res) => {
 /* ============================================================
    SAVE ANSWER
 ============================================================ */
-exports.saveStudentAnswer = async (req, res) => {
+exports.saveStudentAnswer = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
       return res.status(403).json({ message: "Unauthorized" });
@@ -297,8 +291,7 @@ exports.saveStudentAnswer = async (req, res) => {
     res.json({ message: "Saved" });
 
   } catch (err) {
-    console.error("saveStudentAnswer:", err);
-    res.status(err.code || 500).json({ message: err.message });
+    next(err);
   }
 };
 
@@ -306,9 +299,7 @@ exports.saveStudentAnswer = async (req, res) => {
 /* ============================================================
    SUBMIT QUIZ
 ============================================================ */
-exports.submitStudentQuiz = async (req, res) => {
-  const conn = await db.getConnection();
-
+exports.submitStudentQuiz = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
       return res.status(403).json({ message: "Unauthorized" });
@@ -316,44 +307,7 @@ exports.submitStudentQuiz = async (req, res) => {
     const studentId = req.session.user.student_id;
     const quizId = req.params.quizId;
 
-    await conn.beginTransaction();
-
-    const rows = await Quiz.getEvaluationData(conn, studentId, quizId);
-
-    const byQuestion = {};
-    rows.forEach(r => {
-      if (!byQuestion[r.question_id])
-        byQuestion[r.question_id] = {
-          marks: r.marks || 0,
-          correct: new Set(),
-          ans: r.answered_option
-        };
-
-      if (r.is_correct)
-        byQuestion[r.question_id].correct.add(r.option_id);
-    });
-
-    let total = 0, obtained = 0;
-
-    for (let qid of Object.keys(byQuestion)) {
-      const q = byQuestion[qid];
-      total += q.marks;
-      if (q.ans && q.correct.has(q.ans))
-        obtained += q.marks;
-    }
-
-    await QuizResult.upsertResultWithTransaction(
-      conn,
-      studentId,
-      quizId,
-      total,
-      obtained
-    );
-
-    await StudentQuizAttempt.markSubmitted(studentId, quizId);
-
-    await conn.commit();
-    conn.release();
+    const { total, obtained } = await QuizResult.evaluateAndSubmit(studentId, quizId);
 
     res.json({
       message: "Submitted",
@@ -362,17 +316,14 @@ exports.submitStudentQuiz = async (req, res) => {
     });
 
   } catch (err) {
-    await conn.rollback();
-    conn.release();
-    console.error("submitStudentQuiz error:", err);
-    res.status(500).json({ message: "Server error" });
+    next(err);
   }
 };
 
 /* ============================================================
    QUIZ SUMMARY
 ============================================================ */
-exports.getQuizSummary = async (req, res) => {
+exports.getQuizSummary = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== "student")
       return res.status(403).json({ message: "Unauthorized" });
@@ -393,8 +344,7 @@ exports.getQuizSummary = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("getQuizSummary error:", err);
-    res.status(500).json({ message: "Server error" });
+    next(err);
   }
 };
 
@@ -402,7 +352,7 @@ exports.getQuizSummary = async (req, res) => {
 /* ============================================================
    GET RESULT
 ============================================================ */
-exports.getStudentQuizResult = async (req, res) => {
+exports.getStudentQuizResult = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== "student")
       return res.status(403).json({ message: "Unauthorized" });
@@ -427,7 +377,6 @@ exports.getStudentQuizResult = async (req, res) => {
     res.json({ result });
 
   } catch (err) {
-    console.error("Student result error:", err);
-    res.status(500).json({ message: "Server error" });
+    next(err);
   }
 };

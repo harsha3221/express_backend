@@ -1,4 +1,4 @@
-const db = require('../util/database.js');
+const db = require('../config/database');
 class Teacher {
     constructor(user_id, department) {
         this.user_id = user_id;
