@@ -55,6 +55,7 @@ exports.getQuizQuestions = async (req, res, next) => {
                     id: row.option_id,
                     option_text: row.option_text,
                     is_correct: !!row.is_correct,
+                    image_url: row.option_image || null,
                 });
             }
         }
@@ -81,89 +82,145 @@ exports.addQuizQuestion = async (req, res, next) => {
         const { question_text, marks } = req.body;
 
         let options = [];
-        if (req.body.options) {
-            try {
-                options = JSON.parse(req.body.options);
-            } catch (e) {
-                return res.status(400).json({ message: "Invalid options format" });
-            }
+        try {
+            options = JSON.parse(req.body.options || "[]");
+        } catch {
+            return res.status(400).json({ message: "Invalid options format" });
         }
 
-        if (!question_text || !Array.isArray(options) || options.length === 0) {
-            return res
-                .status(400)
-                .json({ message: "Question text and at least one option are required" });
+        if (!question_text || options.length === 0) {
+            return res.status(400).json({
+                message: "Question text and options required",
+            });
         }
 
         const m = Number(marks) || 1;
 
-        let imageUrl = null;
-        if (req.file) {
-            imageUrl = await uploadToCloudinary(req.file.path, 'quiz_questions');
+        let questionImageUrl = null;
+        const optionImageMap = {};
+
+        if (req.files && req.files.length > 0) {
+
+            // 🔥 Upload all images in parallel
+            const uploadPromises = req.files.map(async (file) => {
+                const folder = file.fieldname === "image"
+                    ? "quiz_questions"
+                    : "quiz_options";
+
+                const url = await uploadToCloudinary(file.path, folder);
+
+                return {
+                    fieldname: file.fieldname,
+                    url,
+                };
+            });
+
+            const uploadedFiles = await Promise.all(uploadPromises);
+
+            // 🔥 Map results
+            uploadedFiles.forEach(({ fieldname, url }) => {
+                if (fieldname === "image") {
+                    questionImageUrl = url;
+                } else if (fieldname.startsWith("option_image_")) {
+                    const index = fieldname.split("_").pop();
+                    optionImageMap[index] = url;
+                }
+            });
         }
+
+        /* 🔥 ATTACH IMAGES TO OPTIONS */
+        options = options.map((opt, index) => ({
+            ...opt,
+            image_url: optionImageMap[index] || null,
+        }));
 
         const { questionId } = await Question.createWithOptions(
             quizId,
             question_text,
             m,
             options,
-            imageUrl
+            questionImageUrl
         );
 
         res.status(201).json({
             message: "Question created successfully",
             question_id: questionId,
         });
+
     } catch (err) {
         next(err);
     }
 };
 
-
 exports.createQuiz = async (req, res, next) => {
     try {
-        // 1️⃣ Check session and role
+        /* ---------------- AUTH CHECK ---------------- */
         if (!req.session.user || req.session.user.role !== 'teacher') {
             return res.status(403).json({ message: 'Unauthorized access' });
         }
 
         const { subject_id, title, description, duration_minutes, start_time, end_time } = req.body;
 
-        // 2️⃣ Validate inputs
+        /* ---------------- BASIC VALIDATION ---------------- */
         if (!subject_id || !title || !duration_minutes || !start_time || !end_time) {
             return res.status(400).json({ message: 'Missing required fields' });
         }
 
         const start = new Date(start_time);
         const end = new Date(end_time);
+        const now = new Date();
 
-        if (isNaN(start) || isNaN(end) || end <= start) {
-            return res.status(400).json({ message: 'Invalid start or end time' });
+        /* ---------------- DATE VALIDATION ---------------- */
+        if (isNaN(start) || isNaN(end)) {
+            return res.status(400).json({ message: 'Invalid date format' });
         }
 
-        // 3️⃣ Get teacher_id using session user
+        if (start < now) {
+            return res.status(400).json({ message: 'Start time cannot be in the past' });
+        }
+
+        if (end <= start) {
+            return res.status(400).json({ message: 'End time must be after start time' });
+        }
+
+        /* ---------------- DURATION VALIDATION ---------------- */
+        const duration = Number(duration_minutes);
+
+        if (!duration || duration <= 0) {
+            return res.status(400).json({ message: 'Duration must be greater than 0' });
+        }
+
+        /* ---------------- GET TEACHER ---------------- */
         const userId = req.session.user.id;
         const [teacherRows] = await Teacher.findByUserId(userId);
+
         if (teacherRows.length === 0) {
             return res.status(404).json({ message: 'Teacher not found' });
         }
+
         const teacherId = teacherRows[0].teacher_id;
 
-        // 4️⃣ Check for overlapping quiz
-        const overlappingQuizzes = await Quiz.checkOverlap(subject_id, teacherId, start_time, end_time);
+        /* ---------------- OVERLAP CHECK ---------------- */
+        const overlappingQuizzes = await Quiz.checkOverlap(
+            subject_id,
+            teacherId,
+            start_time,
+            end_time
+        );
+
         if (overlappingQuizzes) {
             return res.status(400).json({
-                message: 'Another quiz for this subject overlaps with the given time period.',
+                message: 'Another quiz overlaps with this time period.',
             });
         }
 
-        // 5️⃣ Create new quiz (default status = draft)
+        /* ---------------- CREATE QUIZ ---------------- */
         const result = await Quiz.createQuiz(
             subject_id,
             teacherId,
             title,
             description || '',
-            duration_minutes,
+            duration,
             start_time,
             end_time
         );
@@ -172,11 +229,11 @@ exports.createQuiz = async (req, res, next) => {
             message: 'Quiz created successfully (status: draft)',
             quiz_id: result.insertId,
         });
+
     } catch (err) {
         next(err);
     }
 };
-
 // ✅ Get all quizzes for the logged-in teacher
 exports.getTeacherQuizzes = async (req, res, next) => {
     try {
@@ -309,18 +366,93 @@ exports.updateQuestion = async (req, res, next) => {
         }
 
         const { quizId, questionId } = req.params;
-        const { question_text, marks, options } = req.body;
+        const { question_text, marks } = req.body;
 
-        const parsedOptions = JSON.parse(options);
-        let image_url = null;
-
-        if (req.file) {
-            image_url = await uploadToCloudinary(req.file.path, 'quiz_questions');
+        let options = [];
+        try {
+            options = JSON.parse(req.body.options || "[]");
+        } catch {
+            return res.status(400).json({ message: "Invalid options format" });
         }
 
-        await Question.updateQuestion(quizId, questionId, question_text, marks, parsedOptions, image_url);
+        let questionImageUrl = null;
+        const optionImageMap = {};
+
+        if (req.files && req.files.length > 0) {
+
+            // 🔥 Upload all images in parallel
+            const uploadPromises = req.files.map(async (file) => {
+                const folder = file.fieldname === "image"
+                    ? "quiz_questions"
+                    : "quiz_options";
+
+                const url = await uploadToCloudinary(file.path, folder);
+
+                return {
+                    fieldname: file.fieldname,
+                    url,
+                };
+            });
+
+            const uploadedFiles = await Promise.all(uploadPromises);
+
+            // 🔥 Map results
+            uploadedFiles.forEach(({ fieldname, url }) => {
+                if (fieldname === "image") {
+                    questionImageUrl = url;
+                } else if (fieldname.startsWith("option_image_")) {
+                    const index = fieldname.split("_").pop();
+                    optionImageMap[index] = url;
+                }
+            });
+        }
+
+        /* 🔥 MERGE OPTION IMAGES */
+        options = options.map((opt, index) => ({
+            ...opt,
+            image_url: optionImageMap[index] || opt.image_url || null,
+        }));
+
+        await Question.updateQuestion(
+            quizId,
+            questionId,
+            question_text,
+            marks,
+            options,
+            questionImageUrl
+        );
 
         res.json({ message: "Question updated successfully" });
+
+    } catch (err) {
+        next(err);
+    }
+};
+exports.deleteQuiz = async (req, res, next) => {
+    try {
+        if (!req.session.user || req.session.user.role !== "teacher") {
+            return res.status(403).json({ message: "Unauthorized access" });
+        }
+
+        const quizId = req.params.quizId;
+        const userId = req.session.user.id;
+
+        // 🔐 Check ownership
+        const { teacherId, quiz } = await ensureQuizBelongsToTeacher(quizId, userId);
+
+        const now = new Date();
+
+        // ❌ Only allow delete if quiz not started
+        if (quiz.start_time && new Date(quiz.start_time) <= now) {
+            return res.status(400).json({
+                message: "Cannot delete quiz that has started or completed",
+            });
+        }
+
+        // ✅ FIXED LINE
+        await Quiz.deleteQuiz(quizId, teacherId);
+
+        res.status(200).json({ message: "Quiz deleted successfully" });
 
     } catch (err) {
         next(err);

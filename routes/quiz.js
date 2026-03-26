@@ -23,7 +23,7 @@ router.get('/subject/:subjectId', quizController.getQuizzesBySubjectForTeacher);
 router.get('/:quizId/questions', quizController.getQuizQuestions);
 
 // Add a new question + options
-router.post('/:quizId/questions', uploadQuestionImage.single("image"), quizController.addQuizQuestion);
+router.post('/:quizId/questions', uploadQuestionImage.any(), quizController.addQuizQuestion);
 
 
 /* ------------------------------------------------------ */
@@ -37,13 +37,13 @@ router.get('/:id', quizController.getQuizById);
 // router.put('/update-status', quizController.updateQuizStatus);
 router.put(
     "/:quizId/questions/:questionId",
-    uploadQuestionImage.single("image"),
+    uploadQuestionImage.any(),
     quizController.updateQuestion
 );//for editing individual questions
 
 // Delete quiz
 router.delete('/:quizId/questions/:questionId', quizController.deleteQuizQuestion);
 
-
+router.delete('/:quizId', quizController.deleteQuiz);
 
 module.exports = router;
