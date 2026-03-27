@@ -1,4 +1,3 @@
-// model/question.js
 const db = require("../config/database");
 
 class Question {
@@ -17,12 +16,12 @@ class Question {
 
             const questionId = qResult.insertId;
 
-            // Insert options (WITH IMAGE SUPPORT)
+            // Insert options
             if (options && options.length > 0) {
                 const values = options.map((opt) => [
                     questionId,
                     opt.option_text || "",
-                    opt.image_url || null, // 🔥 IMAGE
+                    opt.image_url || null,
                     opt.is_correct ? 1 : 0,
                 ]);
 
@@ -48,18 +47,25 @@ class Question {
     static async getByQuizId(quizId) {
         const [rows] = await db.query(
             `SELECT 
-                q.id AS question_id,
-                q.question_text,
-                q.image_url AS question_image,
-                q.marks,
-                o.id AS option_id,
-                o.option_text,
-                o.image_url AS option_image, -- 🔥 IMPORTANT
-                o.is_correct
-            FROM questions q
-            LEFT JOIN options o ON q.id = o.question_id
-            WHERE q.quiz_id = ?
-            ORDER BY q.id ASC, o.id ASC`,
+            q.id,
+            q.question_text,
+            q.marks,
+            q.image_url,
+            (
+                SELECT JSON_ARRAYAGG(
+                    JSON_OBJECT(
+                        'id', o.id,
+                        'option_text', o.option_text,
+                        'is_correct', CAST(o.is_correct AS UNSIGNED), 
+                        'image_url', o.image_url
+                    )
+                )
+                FROM options o
+                WHERE o.question_id = q.id
+            ) AS options
+        FROM questions q
+        WHERE q.quiz_id = ?
+        ORDER BY q.id ASC`,
             [quizId]
         );
         return rows;
@@ -67,10 +73,12 @@ class Question {
 
     /* ---------------- DELETE ---------------- */
     static async deleteById(questionId) {
+        // Note: Ensure your DB schema has "ON DELETE CASCADE" for options table
+        // otherwise, you'll need to delete options manually first.
         return db.query(`DELETE FROM questions WHERE id = ?`, [questionId]);
     }
 
-    /* ---------------- GET IMAGES ---------------- */
+    /* ---------------- GET IMAGES (For Cleanup Logic) ---------------- */
     static async getImagesById(questionId) {
         const [rows] = await db.query(
             `SELECT 
@@ -84,34 +92,35 @@ class Question {
         return rows;
     }
 
-    /* ---------------- UPDATE (FIXED 🔥) ---------------- */
+    /* ---------------- UPDATE (FIXED 🛠️) ---------------- */
     static async updateQuestion(quizId, questionId, questionText, marks, options, imageUrl) {
         const conn = await db.getConnection();
         try {
             await conn.beginTransaction();
 
-            // 1️⃣ Update question
+            // 1️⃣ Update question (Removed COALESCE to allow nullifying images)
             await conn.execute(
                 `UPDATE questions
                  SET question_text = ?, 
                      marks = ?, 
-                     image_url = COALESCE(?, image_url)
+                     image_url = ?
                  WHERE id = ? AND quiz_id = ?`,
                 [questionText, marks, imageUrl, questionId, quizId]
             );
 
-            // 2️⃣ Delete old options
+            // 2️⃣ Delete old options 
+            // (Standard approach for simple quiz apps to keep data clean)
             await conn.execute(
                 `DELETE FROM options WHERE question_id = ?`,
                 [questionId]
             );
 
-            // 3️⃣ Insert new options (WITH IMAGE SUPPORT 🔥)
+            // 3️⃣ Insert new options
             if (options && options.length > 0) {
                 const values = options.map((opt) => [
                     questionId,
                     opt.option_text || "",
-                    opt.image_url || null, // 🔥 ADD THIS
+                    opt.image_url || null,
                     opt.is_correct ? 1 : 0,
                 ]);
 
@@ -123,6 +132,7 @@ class Question {
             }
 
             await conn.commit();
+            return true;
 
         } catch (error) {
             await conn.rollback();

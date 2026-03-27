@@ -3,6 +3,7 @@ const Teacher = require('../model/teacher');
 const Question = require("../model/question");
 const { uploadToCloudinary, deleteFromCloudinary } = require("../services/imageService");
 const fs = require("fs");
+const cloudinary = require('../config/cloudinary');
 const path = require("path");
 const db = require('../config/database');
 //this is the helper function to deal with the unwanted access ,can be removed 
@@ -31,36 +32,19 @@ exports.getQuizQuestions = async (req, res, next) => {
             return res.status(403).json({ message: "Unauthorized access" });
         }
 
-        const quizId = req.params.quizId;
+        const { quizId } = req.params;
         const userId = req.session.user.id;
 
         await ensureQuizBelongsToTeacher(quizId, userId);
 
         const rows = await Question.getByQuizId(quizId);
 
-        const questionsMap = new Map();
-
-        for (const row of rows) {
-            if (!questionsMap.has(row.question_id)) {
-                questionsMap.set(row.question_id, {
-                    id: row.question_id,
-                    question_text: row.question_text,
-                    marks: row.marks,
-                    image_url: row.question_image || null, // 👈 expose to frontend
-                    options: [],
-                });
-            }
-            if (row.option_id) {
-                questionsMap.get(row.question_id).options.push({
-                    id: row.option_id,
-                    option_text: row.option_text,
-                    is_correct: !!row.is_correct,
-                    image_url: row.option_image || null,
-                });
-            }
-        }
-
-        const questions = Array.from(questionsMap.values());
+        // Map through rows to handle JSON parsing (required by some MySQL drivers)
+        const questions = rows.map(q => ({
+            ...q,
+            // If rows[i].options comes back as a string, parse it; otherwise use as is.
+            options: typeof q.options === 'string' ? JSON.parse(q.options) : (q.options || [])
+        }));
 
         res.status(200).json({ questions });
     } catch (err) {
@@ -70,83 +54,24 @@ exports.getQuizQuestions = async (req, res, next) => {
 
 exports.addQuizQuestion = async (req, res, next) => {
     try {
-        if (!req.session.user || req.session.user.role !== "teacher") {
-            return res.status(403).json({ message: "Unauthorized access" });
+        const { question_text, marks, options, image_url } = req.body;
+        const { quizId } = req.params;
+
+        // Validation
+        if (!question_text || !options || options.length < 2) {
+            return res.status(400).json({ message: "Invalid data" });
         }
 
-        const quizId = req.params.quizId;
-        const userId = req.session.user.id;
-
-        await ensureQuizBelongsToTeacher(quizId, userId);
-
-        const { question_text, marks } = req.body;
-
-        let options = [];
-        try {
-            options = JSON.parse(req.body.options || "[]");
-        } catch {
-            return res.status(400).json({ message: "Invalid options format" });
-        }
-
-        if (!question_text || options.length === 0) {
-            return res.status(400).json({
-                message: "Question text and options required",
-            });
-        }
-
-        const m = Number(marks) || 1;
-
-        let questionImageUrl = null;
-        const optionImageMap = {};
-
-        if (req.files && req.files.length > 0) {
-
-            // 🔥 Upload all images in parallel
-            const uploadPromises = req.files.map(async (file) => {
-                const folder = file.fieldname === "image"
-                    ? "quiz_questions"
-                    : "quiz_options";
-
-                const url = await uploadToCloudinary(file.path, folder);
-
-                return {
-                    fieldname: file.fieldname,
-                    url,
-                };
-            });
-
-            const uploadedFiles = await Promise.all(uploadPromises);
-
-            // 🔥 Map results
-            uploadedFiles.forEach(({ fieldname, url }) => {
-                if (fieldname === "image") {
-                    questionImageUrl = url;
-                } else if (fieldname.startsWith("option_image_")) {
-                    const index = fieldname.split("_").pop();
-                    optionImageMap[index] = url;
-                }
-            });
-        }
-
-        /* 🔥 ATTACH IMAGES TO OPTIONS */
-        options = options.map((opt, index) => ({
-            ...opt,
-            image_url: optionImageMap[index] || null,
-        }));
-
+        // Save to DB (options already have URLs from the frontend)
         const { questionId } = await Question.createWithOptions(
             quizId,
             question_text,
-            m,
+            marks,
             options,
-            questionImageUrl
+            image_url
         );
 
-        res.status(201).json({
-            message: "Question created successfully",
-            question_id: questionId,
-        });
-
+        res.status(201).json({ message: "Question created", questionId });
     } catch (err) {
         next(err);
     }
@@ -331,14 +256,9 @@ exports.deleteQuizQuestion = async (req, res, next) => {
         }
 
         const { quizId, questionId } = req.params;
-        const userId = req.session.user.id;
+        await ensureQuizBelongsToTeacher(quizId, req.session.user.id);
 
-        await ensureQuizBelongsToTeacher(quizId, userId);
-
-        // 1️⃣ Fetch image paths before deleting DB rows
         const imageRows = await Question.getImagesById(questionId);
-
-        // Extract all unique non-null paths
         const imagePaths = new Set();
 
         imageRows.forEach(row => {
@@ -346,14 +266,12 @@ exports.deleteQuizQuestion = async (req, res, next) => {
             if (row.option_image) imagePaths.add(row.option_image);
         });
 
-        // 2️⃣ Delete files safely from Cloudinary
+        // Delete from Cloudinary using the helper service
         for (const imgUrl of imagePaths) {
             await deleteFromCloudinary(imgUrl);
         }
 
-        // 3️⃣ Delete from DB
         await Question.deleteById(questionId);
-
         res.status(200).json({ message: "Question deleted successfully" });
     } catch (err) {
         next(err);
@@ -366,64 +284,21 @@ exports.updateQuestion = async (req, res, next) => {
         }
 
         const { quizId, questionId } = req.params;
-        const { question_text, marks } = req.body;
+        const { question_text, marks, options, image_url } = req.body;
 
-        let options = [];
-        try {
-            options = JSON.parse(req.body.options || "[]");
-        } catch {
-            return res.status(400).json({ message: "Invalid options format" });
-        }
+        await ensureQuizBelongsToTeacher(quizId, req.session.user.id);
 
-        let questionImageUrl = null;
-        const optionImageMap = {};
-
-        if (req.files && req.files.length > 0) {
-
-            // 🔥 Upload all images in parallel
-            const uploadPromises = req.files.map(async (file) => {
-                const folder = file.fieldname === "image"
-                    ? "quiz_questions"
-                    : "quiz_options";
-
-                const url = await uploadToCloudinary(file.path, folder);
-
-                return {
-                    fieldname: file.fieldname,
-                    url,
-                };
-            });
-
-            const uploadedFiles = await Promise.all(uploadPromises);
-
-            // 🔥 Map results
-            uploadedFiles.forEach(({ fieldname, url }) => {
-                if (fieldname === "image") {
-                    questionImageUrl = url;
-                } else if (fieldname.startsWith("option_image_")) {
-                    const index = fieldname.split("_").pop();
-                    optionImageMap[index] = url;
-                }
-            });
-        }
-
-        /* 🔥 MERGE OPTION IMAGES */
-        options = options.map((opt, index) => ({
-            ...opt,
-            image_url: optionImageMap[index] || opt.image_url || null,
-        }));
-
+        // Directly pass the updated text and URLs to the model
         await Question.updateQuestion(
             quizId,
             questionId,
             question_text,
             marks,
             options,
-            questionImageUrl
+            image_url
         );
 
         res.json({ message: "Question updated successfully" });
-
     } catch (err) {
         next(err);
     }
@@ -454,6 +329,33 @@ exports.deleteQuiz = async (req, res, next) => {
 
         res.status(200).json({ message: "Quiz deleted successfully" });
 
+    } catch (err) {
+        next(err);
+    }
+};
+
+
+
+exports.getUploadSignature = async (req, res, next) => {
+    try {
+        if (!req.session.user) return res.status(401).json({ message: "Unauthorized" });
+
+        const timestamp = Math.round(new Date().getTime() / 1000);
+        const folder = req.query.folder || 'quiz_uploads';
+
+        // Generate signature using API Secret (staying safe on server)
+        const signature = cloudinary.utils.api_sign_request(
+            { timestamp, folder },
+            process.env.CLOUDINARY_API_SECRET
+        );
+
+        res.json({
+            signature,
+            timestamp,
+            cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+            apiKey: process.env.CLOUDINARY_API_KEY,
+            folder
+        });
     } catch (err) {
         next(err);
     }
