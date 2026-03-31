@@ -39,3 +39,32 @@ exports.reportCheating = async (req, res, next) => {
         next(err);
     }
 };
+
+exports.getCheatingLogs = async (req, res, next) => {
+    try {
+        const { quizId } = req.params;
+
+        // Destructure to get ONLY the rows (the first element)
+        const [rows] = await db.execute(`
+            SELECT 
+                cl.event_type, 
+                cl.created_at AS time, 
+                u.name AS studentName, 
+                u.email AS studentEmail,
+                cl.quiz_id AS quizId
+            FROM cheating_logs cl
+            JOIN students s ON cl.student_id = s.id
+            JOIN users u ON s.user_id = u.id
+            WHERE cl.quiz_id = ?
+            ORDER BY cl.created_at DESC
+        `, [quizId]);
+
+        // Explicitly log this to your NODE terminal to see what's being sent
+        console.log(`Sending ${rows.length} logs for Quiz ${quizId}`);
+
+        res.json(rows); // Send the array of objects directly
+    } catch (err) {
+        console.error("Controller Error:", err);
+        next(err);
+    }
+};

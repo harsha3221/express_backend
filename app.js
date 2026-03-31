@@ -12,13 +12,13 @@ const MySQLStore = require("express-mysql-session")(session);
 const cors = require("cors");
 const csrf = require("csurf");
 const path = require("path");
-const cheatingController = require('./controllers/cheatingController.js');
+const cheatingRoutes = require('./routes/cheating.js');
 
 
 /* ---------------- CORS ---------------- */
 app.use(
   cors({
-    origin: "http://localhost:3001",
+    origin: process.env.frontend_url,
     credentials: true,
   })
 );
@@ -37,10 +37,10 @@ app.use(
     saveUninitialized: false,
     store: sessionStore,
     cookie: {
-      maxAge: 1000 * 60 * 60, // 1 hour
-      httpOnly: true, // Prevents client-side JS from reading the cookie
-      sameSite: 'strict', // Prevents CSRF
-      secure: process.env.NODE_ENV === 'production', // Requires HTTPS in production
+      maxAge: 1000 * 60 * 60,
+      httpOnly: true,
+      sameSite: 'lax', // ✅ FIXED
+      secure: false,   // ✅ for localhost (IMPORTANT)
     },
   })
 );
@@ -61,8 +61,8 @@ app.get("/me", csrfProtection, (req, res) => {
   }
 
   res.json({
-    user: req.session.user,      // { id, role, name, ... }
-    csrfToken: req.csrfToken(),  // IMPORTANT
+    user: req.session.user,
+    csrfToken: req.csrfToken(), // ✅ NOW VALID
   });
 });
 
@@ -71,7 +71,7 @@ app.get("/me", csrfProtection, (req, res) => {
 app.use("/quiz", csrfProtection, quizRoutes);
 app.use("/teacher", csrfProtection, teacherRoute);
 app.use("/student", csrfProtection, studentRoutes);
-app.post("/api/report-cheating", cheatingController.reportCheating);
+app.use("/api", csrfProtection, cheatingRoutes);
 
 /* -------------- ERROR HANDLER ------------- */
 const errorHandler = require("./middlewares/errorHandler");
@@ -86,3 +86,4 @@ app.use(errorHandler);
 //     });
 //   })
 //   .catch(console.error);
+module.exports = app;
