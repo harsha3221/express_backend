@@ -51,26 +51,49 @@ class Question {
             q.question_text,
             q.marks,
             q.image_url,
-            (
-                SELECT JSON_ARRAYAGG(
-                    JSON_OBJECT(
-                        'id', o.id,
-                        'option_text', o.option_text,
-                        'is_correct', CAST(o.is_correct AS UNSIGNED), 
-                        'image_url', o.image_url
+            COALESCE(
+                (
+                    SELECT JSON_ARRAYAGG(
+                        JSON_OBJECT(
+                            'id', o.id,
+                            'option_text', o.option_text,
+                            'is_correct', CAST(o.is_correct AS UNSIGNED),
+                            'image_url', IFNULL(o.image_url, '')
+                        )
                     )
-                )
-                FROM options o
-                WHERE o.question_id = q.id
+                    FROM options o
+                    WHERE o.question_id = q.id
+                ),
+                JSON_ARRAY()
             ) AS options
         FROM questions q
         WHERE q.quiz_id = ?
         ORDER BY q.id ASC`,
             [quizId]
         );
-        return rows;
-    }
 
+        return rows.map((row) => {
+            let parsedOptions = [];
+
+            try {
+                if (Array.isArray(row.options)) {
+                    parsedOptions = row.options;
+                } else if (typeof row.options === "string") {
+                    parsedOptions = JSON.parse(row.options);
+                } else {
+                    parsedOptions = [];
+                }
+            } catch (err) {
+                console.error("Error parsing options JSON:", err);
+                parsedOptions = [];
+            }
+
+            return {
+                ...row,
+                options: parsedOptions,
+            };
+        });
+    }
     /* ---------------- DELETE ---------------- */
     static async deleteById(questionId) {
         // Note: Ensure your DB schema has "ON DELETE CASCADE" for options table

@@ -227,7 +227,7 @@ exports.getQuizById = async (req, res, next) => {
     }
 };
 
-// ✅ Update quiz status (e.g., activate or complete quiz)
+
 exports.updateQuizStatus = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== 'teacher') {
@@ -248,7 +248,7 @@ exports.updateQuizStatus = async (req, res, next) => {
     }
 };
 
-// ✅ Delete a quiz
+
 exports.deleteQuizQuestion = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== "teacher") {
@@ -266,7 +266,7 @@ exports.deleteQuizQuestion = async (req, res, next) => {
             if (row.option_image) imagePaths.add(row.option_image);
         });
 
-        // Delete from Cloudinary using the helper service
+        
         for (const imgUrl of imagePaths) {
             await deleteFromCloudinary(imgUrl);
         }
@@ -288,7 +288,7 @@ exports.updateQuestion = async (req, res, next) => {
 
         await ensureQuizBelongsToTeacher(quizId, req.session.user.id);
 
-        // Directly pass the updated text and URLs to the model
+        
         await Question.updateQuestion(
             quizId,
             questionId,
@@ -312,19 +312,19 @@ exports.deleteQuiz = async (req, res, next) => {
         const quizId = req.params.quizId;
         const userId = req.session.user.id;
 
-        // 🔐 Check ownership
+        
         const { teacherId, quiz } = await ensureQuizBelongsToTeacher(quizId, userId);
 
         const now = new Date();
 
-        // ❌ Only allow delete if quiz not started
+        
         if (quiz.start_time && new Date(quiz.start_time) <= now) {
             return res.status(400).json({
                 message: "Cannot delete quiz that has started or completed",
             });
         }
 
-        // ✅ FIXED LINE
+        
         await Quiz.deleteQuiz(quizId, teacherId);
 
         res.status(200).json({ message: "Quiz deleted successfully" });

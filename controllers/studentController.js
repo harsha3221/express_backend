@@ -185,7 +185,7 @@ exports.getSubjectQuizzes = async (req, res, next) => {
 };
 
 /* ============================================================
-   START QUIZ
+   START QUIZ (Updated Logic)
 ============================================================ */
 exports.startQuizForStudent = async (req, res, next) => {
   try {
@@ -197,52 +197,31 @@ exports.startQuizForStudent = async (req, res, next) => {
 
     const { quiz } = await ensureStudentAndEnrollment(studentId, quizId);
 
-    const submitted = await StudentQuizAttempt.isSubmitted(studentId, quizId);
-    if (submitted)
+    const attempt = await StudentQuizAttempt.createIfNotExists(studentId, quizId);
+    if (attempt.submitted)
       return res.status(403).json({ message: "Quiz already submitted" });
 
-    const attempt = await StudentQuizAttempt.createIfNotExists(
-      studentId,
-      quizId
-    );
+    // This now returns an array of questions, each with its own .options array
+    const questions = await Question.getByQuizId(quizId);
+    console.log("===== DEBUG QUESTIONS =====");
+    console.log("Total Questions:", questions.length);
 
-    const rows = await Question.getByQuizId(quizId);
+    questions.forEach((q, i) => {
+      console.log(`Q${i + 1}:`, q.question_text);
+      console.log("Options:", q.options);
+    });
 
-    // Build question map
-    const map = new Map();
-    for (const r of rows) {
-      if (!map.has(r.question_id)) {
-        map.set(r.question_id, {
-          id: r.question_id,
-          question_text: r.question_text,
-          image_url: r.question_image || null,
-          marks: r.marks,
-          options: []
-        });
-      }
-
-      if (r.option_id) {
-        map.get(r.question_id).options.push({
-          id: r.option_id,
-          option_text: r.option_text,
-          image_url: r.option_image || null
-        });
-      }
-    }
-
-    // Shuffle
-    let questions = shuffleArray(Array.from(map.values()));
-    questions = questions.map(q => ({
+    // Shuffle questions and their internal options
+    const randomizedQuestions = shuffleArray(questions).map(q => ({
       ...q,
       options: shuffleArray(q.options)
     }));
 
-    // ✅ Now clean — no raw SQL
     const answers = await StudentAnswer.getAnswers(studentId, quizId);
 
     res.json({
       quiz,
-      questions,
+      questions: randomizedQuestions,
       existingAnswers: answers,
       attempt: {
         started_at: attempt.started_at,
@@ -254,8 +233,6 @@ exports.startQuizForStudent = async (req, res, next) => {
     next(err);
   }
 };
-
-
 /* ============================================================
    SAVE ANSWER
 ============================================================ */
