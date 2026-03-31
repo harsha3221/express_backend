@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const app = express();
+
 const db = require("./config/database");
 const authRoute = require("./routes/auth");
 const teacherRoute = require("./routes/teacher");
@@ -11,6 +12,7 @@ const MySQLStore = require("express-mysql-session")(session);
 const cors = require("cors");
 const csrf = require("csurf");
 const path = require("path");
+const cheatingController = require('./controllers/cheatingController.js');
 
 
 /* ---------------- CORS ---------------- */
@@ -69,17 +71,18 @@ app.get("/me", csrfProtection, (req, res) => {
 app.use("/quiz", csrfProtection, quizRoutes);
 app.use("/teacher", csrfProtection, teacherRoute);
 app.use("/student", csrfProtection, studentRoutes);
+app.post("/api/report-cheating", cheatingController.reportCheating);
 
 /* -------------- ERROR HANDLER ------------- */
 const errorHandler = require("./middlewares/errorHandler");
 app.use(errorHandler);
 
 /* ---------------- SERVER ---------------- */
-db.getConnection()
-  .then(() => {
-    app.listen(3000, () => {
-      console.log("database connection successful");
-      console.log("server running on port 3000");
-    });
-  })
-  .catch(console.error);
+// db.getConnection()
+//   .then(() => {
+//     app.listen(3000, () => {
+//       console.log("database connection successful");
+//       console.log("server running on port 3000");
+//     });
+//   })
+//   .catch(console.error);
