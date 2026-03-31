@@ -40,7 +40,7 @@ io.on("connection", (socket) => {
         console.log(`🔌 ${user.name} disconnected.`);
     });
 });
-const port = process.env.port || 3000
+const port = process.env.port || 3000;
 server.listen(port, () => {
     console.log("🚀 Server + Socket running on port 3000");
 });
