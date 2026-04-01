@@ -32,15 +32,16 @@ const sessionStore = new MySQLStore({}, db.db);
 
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "fallback_secret_do_not_use_in_prod",
+    secret: process.env.SESSION_SECRET || "your_secret_here",
     resave: false,
     saveUninitialized: false,
     store: sessionStore,
+    proxy: true, // Required for Render/Cloud platforms
     cookie: {
       maxAge: 1000 * 60 * 60,
       httpOnly: true,
-      sameSite: 'lax', // ✅ FIXED
-      secure: false,   // ✅ for localhost (IMPORTANT)
+      secure: true,      // Must be true for HTTPS
+      sameSite: 'none',  // Must be 'none' for Cross-Domain cookies
     },
   })
 );
