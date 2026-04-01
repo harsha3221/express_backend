@@ -5,11 +5,11 @@ const { Server } = require("socket.io");
 const app = require("./app");
 const db = require("./config/database");
 const server = http.createServer(app);
-
+const allowedOrigins = process.env.frontend_url ? process.env.frontend_url.split(',') : [];
 
 const io = new Server(server, {
     cors: {
-        origin: process.env.frontend_url,
+        origin: allowedOrigins,
         credentials: true,
     },
 });

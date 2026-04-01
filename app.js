@@ -14,11 +14,11 @@ const csrf = require("csurf");
 const path = require("path");
 const cheatingRoutes = require('./routes/cheating.js');
 
-
+const allowedOrigins = process.env.frontend_url ? process.env.frontend_url.split(',') : [];
 /* ---------------- CORS ---------------- */
 app.use(
   cors({
-    origin: process.env.frontend_url,
+    origin: allowedOrigins,
     credentials: true,
   })
 );
