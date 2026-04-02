@@ -79,28 +79,28 @@ exports.addQuizQuestion = async (req, res, next) => {
 
 exports.createQuiz = async (req, res, next) => {
     try {
-        /* ---------------- AUTH CHECK ---------------- */
         if (!req.session.user || req.session.user.role !== 'teacher') {
             return res.status(403).json({ message: 'Unauthorized access' });
         }
 
         const { subject_id, title, description, duration_minutes, start_time, end_time } = req.body;
 
-        /* ---------------- BASIC VALIDATION ---------------- */
         if (!subject_id || !title || !duration_minutes || !start_time || !end_time) {
             return res.status(400).json({ message: 'Missing required fields' });
         }
 
+        // 🔥 Parse ISO strings into Date objects
         const start = new Date(start_time);
         const end = new Date(end_time);
         const now = new Date();
 
         /* ---------------- DATE VALIDATION ---------------- */
-        if (isNaN(start) || isNaN(end)) {
+        if (isNaN(start.getTime()) || isNaN(end.getTime())) {
             return res.status(400).json({ message: 'Invalid date format' });
         }
 
-        if (start < now) {
+        // Use a small buffer (e.g., 1 minute) to account for network latency
+        if (start < new Date(now.getTime() - 60000)) {
             return res.status(400).json({ message: 'Start time cannot be in the past' });
         }
 
@@ -108,29 +108,25 @@ exports.createQuiz = async (req, res, next) => {
             return res.status(400).json({ message: 'End time must be after start time' });
         }
 
-        /* ---------------- DURATION VALIDATION ---------------- */
         const duration = Number(duration_minutes);
-
         if (!duration || duration <= 0) {
             return res.status(400).json({ message: 'Duration must be greater than 0' });
         }
 
-        /* ---------------- GET TEACHER ---------------- */
         const userId = req.session.user.id;
         const [teacherRows] = await Teacher.findByUserId(userId);
-
         if (teacherRows.length === 0) {
             return res.status(404).json({ message: 'Teacher not found' });
         }
 
         const teacherId = teacherRows[0].teacher_id;
 
-        /* ---------------- OVERLAP CHECK ---------------- */
+        // Ensure overlap check uses the same parsed dates
         const overlappingQuizzes = await Quiz.checkOverlap(
             subject_id,
             teacherId,
-            start_time,
-            end_time
+            start.toISOString(), // Send back to DB in UTC
+            end.toISOString()
         );
 
         if (overlappingQuizzes) {
@@ -139,19 +135,18 @@ exports.createQuiz = async (req, res, next) => {
             });
         }
 
-        /* ---------------- CREATE QUIZ ---------------- */
         const result = await Quiz.createQuiz(
             subject_id,
             teacherId,
             title,
             description || '',
             duration,
-            start_time,
-            end_time
+            start.toISOString(),
+            end.toISOString()
         );
 
         res.status(201).json({
-            message: 'Quiz created successfully (status: draft)',
+            message: 'Quiz created successfully',
             quiz_id: result.insertId,
         });
 
@@ -266,7 +261,7 @@ exports.deleteQuizQuestion = async (req, res, next) => {
             if (row.option_image) imagePaths.add(row.option_image);
         });
 
-        
+
         for (const imgUrl of imagePaths) {
             await deleteFromCloudinary(imgUrl);
         }
@@ -288,7 +283,7 @@ exports.updateQuestion = async (req, res, next) => {
 
         await ensureQuizBelongsToTeacher(quizId, req.session.user.id);
 
-        
+
         await Question.updateQuestion(
             quizId,
             questionId,
@@ -312,19 +307,19 @@ exports.deleteQuiz = async (req, res, next) => {
         const quizId = req.params.quizId;
         const userId = req.session.user.id;
 
-        
+
         const { teacherId, quiz } = await ensureQuizBelongsToTeacher(quizId, userId);
 
         const now = new Date();
 
-        
+
         if (quiz.start_time && new Date(quiz.start_time) <= now) {
             return res.status(400).json({
                 message: "Cannot delete quiz that has started or completed",
             });
         }
 
-        
+
         await Quiz.deleteQuiz(quizId, teacherId);
 
         res.status(200).json({ message: "Quiz deleted successfully" });

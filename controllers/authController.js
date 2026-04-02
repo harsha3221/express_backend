@@ -71,38 +71,41 @@ exports.postSignup = async (req, res, next) => {
 /* =========================================================
    VERIFY EMAIL (TIMEZONE SAFE)
 ========================================================= */
+/* =========================================================
+   VERIFY EMAIL (JSON API VERSION)
+========================================================= */
 exports.verifyEmail = async (req, res, next) => {
   try {
     const { token } = req.query;
 
     if (!token) {
-      return res.redirect(`${process.env.FRONTEND_URL}/verification-failed`);
+      return res.status(400).json({ message: "Token is missing" });
     }
 
     const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
-
     const [rows] = await User.findByVerificationToken(hashedToken);
 
+    // 1. Check if user exists
     if (rows.length === 0) {
-      return res.redirect(`${process.env.FRONTEND_URL}/verification-failed`);
+      return res.status(404).json({ message: "Invalid or expired token" });
     }
+
 
     const expiryTime = new Date(rows[0].verification_token_expiry);
-
-    // ✅ Compare in Node instead of MySQL NOW()
     if (expiryTime < new Date()) {
-      return res.redirect(`${process.env.FRONTEND_URL}/verification-failed`);
+      return res.status(410).json({ message: "Token has expired" });
     }
+
 
     await User.verifyUser(rows[0].id);
 
-    return res.redirect(`${process.env.FRONTEND_URL}/verification-success`);
+
+    return res.status(200).json({ message: "Email verified successfully" });
 
   } catch (err) {
     next(err);
   }
 };
-
 
 /* =========================================================
    RESEND VERIFICATION (FIXED TIMEZONE)
