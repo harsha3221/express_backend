@@ -77,6 +77,11 @@ exports.addQuizQuestion = async (req, res, next) => {
     }
 };
 
+// Helper to convert JS Date to MySQL DATETIME format: YYYY-MM-DD HH:MM:SS
+const toMySQLDateTime = (date) => {
+    return date.toISOString().slice(0, 19).replace('T', ' ');
+};
+
 exports.createQuiz = async (req, res, next) => {
     try {
         if (!req.session.user || req.session.user.role !== 'teacher') {
@@ -89,17 +94,14 @@ exports.createQuiz = async (req, res, next) => {
             return res.status(400).json({ message: 'Missing required fields' });
         }
 
-        // 🔥 Parse ISO strings into Date objects
         const start = new Date(start_time);
         const end = new Date(end_time);
         const now = new Date();
 
-        /* ---------------- DATE VALIDATION ---------------- */
         if (isNaN(start.getTime()) || isNaN(end.getTime())) {
             return res.status(400).json({ message: 'Invalid date format' });
         }
 
-        // Use a small buffer (e.g., 1 minute) to account for network latency
         if (start < new Date(now.getTime() - 60000)) {
             return res.status(400).json({ message: 'Start time cannot be in the past' });
         }
@@ -109,24 +111,21 @@ exports.createQuiz = async (req, res, next) => {
         }
 
         const duration = Number(duration_minutes);
-        if (!duration || duration <= 0) {
-            return res.status(400).json({ message: 'Duration must be greater than 0' });
-        }
-
         const userId = req.session.user.id;
         const [teacherRows] = await Teacher.findByUserId(userId);
+
         if (teacherRows.length === 0) {
             return res.status(404).json({ message: 'Teacher not found' });
         }
 
         const teacherId = teacherRows[0].teacher_id;
 
-        // Ensure overlap check uses the same parsed dates
+        // ✅ FIX 1: Format dates for the overlap check
         const overlappingQuizzes = await Quiz.checkOverlap(
             subject_id,
             teacherId,
-            start.toISOString(), // Send back to DB in UTC
-            end.toISOString()
+            toMySQLDateTime(start),
+            toMySQLDateTime(end)
         );
 
         if (overlappingQuizzes) {
@@ -135,14 +134,15 @@ exports.createQuiz = async (req, res, next) => {
             });
         }
 
+        // ✅ FIX 2: Format dates for the actual insertion
         const result = await Quiz.createQuiz(
             subject_id,
             teacherId,
             title,
             description || '',
             duration,
-            start.toISOString(),
-            end.toISOString()
+            toMySQLDateTime(start),
+            toMySQLDateTime(end)
         );
 
         res.status(201).json({
