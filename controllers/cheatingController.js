@@ -2,6 +2,7 @@ const db = require("../config/database");
 
 exports.reportCheating = async (req, res, next) => {
     try {
+        // 1. Authorization Check
         if (!req.session.user || req.session.user.role !== "student") {
             return res.status(403).json({ message: "Unauthorized" });
         }
@@ -9,33 +10,49 @@ exports.reportCheating = async (req, res, next) => {
         const studentId = req.session.user.student_id;
         const { quizId, event_type } = req.body;
 
-        // 1. Save in DB
+        if (!quizId || !event_type) {
+            return res.status(400).json({ message: "Missing required fields" });
+        }
+
+        // 2. Save in DB
         await db.execute(
             "INSERT INTO cheating_logs (student_id, quiz_id, event_type) VALUES (?, ?, ?)",
             [studentId, quizId, event_type]
         );
 
-        // 2. Get student + teacher info
-        const [[data]] = await db.execute(`
-      SELECT u.name, u.email, q.teacher_id
-      FROM users u
-      JOIN students s ON s.user_id = u.id
-      JOIN quizzes q ON q.id = ?
-      WHERE s.id = ?
-    `, [quizId, studentId]);
+        // 3. Get student + teacher info
+        // Added a check to ensure we actually find the record
+        const [results] = await db.execute(`
+            SELECT u.name, u.email, q.teacher_id
+            FROM users u
+            JOIN students s ON s.user_id = u.id
+            JOIN quizzes q ON q.id = ?
+            WHERE s.id = ?
+        `, [quizId, studentId]);
 
-        // 3. Emit to teacher
-        global.io.to(`teacher_${data.teacher_id}`).emit("cheating_alert", {
-            studentName: data.name,
-            studentEmail: data.email,
-            quizId,
-            event_type,
-            time: new Date(),
-        });
+        const data = results[0];
 
-        res.json({ message: "Cheating reported" });
+        // 4. Emit to teacher only if data was found
+        if (data && global.io) {
+            const teacherRoom = `teacher_${data.teacher_id}`;
+
+            console.log(`📢 Emitting cheating alert to ${teacherRoom}`);
+
+            global.io.to(teacherRoom).emit("cheating_alert", {
+                studentName: data.name,
+                studentEmail: data.email,
+                quizId: String(quizId), // Stringify for reliable frontend comparison
+                event_type: event_type,
+                time: new Date(),
+            });
+        } else {
+            console.warn("⚠️ Cheating logged, but no teacher/student mapping found for real-time alert.");
+        }
+
+        res.json({ message: "Cheating reported successfully" });
 
     } catch (err) {
+        console.error("❌ Error in reportCheating:", err);
         next(err);
     }
 };

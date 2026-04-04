@@ -26,25 +26,29 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.urlencoded({ extended: true }));
+const isProduction = process.env.NODE_ENV === 'production';
 
 /* ---------------- SESSION ---------------- */
-const sessionStore = new MySQLStore({}, db.db);
+const sessionStore = new MySQLStore({
+  clearExpired: true,
+  checkExpirationInterval: 900000,
+}, db.db);
+const sessionMiddleware = session({
+  secret: process.env.SESSION_SECRET || "your_secret_here",
+  resave: false,
+  saveUninitialized: false,
+  store: sessionStore,
+  proxy: true, // Required for many hosting providers (Reverse Proxies)
+  cookie: {
+    maxAge: 1000 * 60 * 60, // 1 hour
+    httpOnly: true,
+    // CONDITIONAL SETTINGS:
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+  },
+});
 
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "your_secret_here",
-    resave: false,
-    saveUninitialized: false,
-    store: sessionStore,
-    proxy: true, // Required for Render/Cloud platforms
-    cookie: {
-      maxAge: 1000 * 60 * 60,
-      httpOnly: true,
-      secure: true,      // Must be true for HTTPS
-      sameSite: 'none',  // Must be 'none' for Cross-Domain cookies
-    },
-  })
-);
+app.use(sessionMiddleware);
 
 /* ---------------- CSRF ---------------- */
 const csrfProtection = csrf({ cookie: false });
@@ -87,4 +91,4 @@ app.use(errorHandler);
 //     });
 //   })
 //   .catch(console.error);
-module.exports = app;
+module.exports = { app, sessionMiddleware };

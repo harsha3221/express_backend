@@ -68,12 +68,8 @@ exports.postSignup = async (req, res, next) => {
 };
 
 
-/* =========================================================
-   VERIFY EMAIL (TIMEZONE SAFE)
-========================================================= */
-/* =========================================================
-   VERIFY EMAIL (JSON API VERSION)
-========================================================= */
+
+
 exports.verifyEmail = async (req, res, next) => {
   try {
     const { token } = req.query;
@@ -174,7 +170,7 @@ exports.postLogin = async (req, res, next) => {
       return res.status(403).json({
         message: "Email not verified",
         needsVerification: true,
-        email: user.email
+        email: user.email,
       });
     }
 
@@ -192,7 +188,7 @@ exports.postLogin = async (req, res, next) => {
         name: user.name,
         email: user.email,
         role: user.role,
-        teacher_id: teacherRows[0].teacher_id
+        teacher_id: teacherRows[0].teacher_id,
       };
     } else {
       const [studentRows] = await Student.findByUserId(user.id);
@@ -201,20 +197,20 @@ exports.postLogin = async (req, res, next) => {
         name: user.name,
         email: user.email,
         role: user.role,
-        student_id: studentRows[0].student_id
+        student_id: studentRows[0].student_id,
       };
     }
 
-    req.session.save(() => {
+    // Wrap the response in req.session.save to ensure the cookie is 
+    // written to the DB before the client tries to read it.
+    req.session.save((err) => {
+      if (err) return next(err);
+
       return res.status(200).json({
         message: "Login successful",
-        userId: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role
+        user: req.session.user, // ✅ Returns full object for AuthContext hydration
       });
     });
-
   } catch (err) {
     next(err);
   }
