@@ -125,10 +125,10 @@ exports.assignZero = async (req, res, next) => {
             // A. Update or Insert result as 0
             // Added NOW() to submitted_at for better record keeping
             await db.execute(`
-                INSERT INTO quiz_results (student_id, quiz_id, total_marks, obtained_marks, submitted_at)
-                VALUES (?, ?, (SELECT SUM(marks) FROM questions WHERE quiz_id = ?), 0, NOW())
-                ON DUPLICATE KEY UPDATE obtained_marks = 0, submitted_at = NOW()
-            `, [id, quizId, quizId]);
+    INSERT INTO quiz_results (student_id, quiz_id, total_marks, obtained_marks, evaluated_at)
+    VALUES (?, ?, (SELECT SUM(marks) FROM questions WHERE quiz_id = ?), 0, NOW())
+    ON DUPLICATE KEY UPDATE obtained_marks = 0, evaluated_at = NOW()
+`, [id, quizId, quizId]);
 
             // B. Mark the attempt as submitted so they can't continue saving answers
             await db.execute(
