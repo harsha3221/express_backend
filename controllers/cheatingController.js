@@ -41,7 +41,7 @@ exports.reportCheating = async (req, res, next) => {
                 studentId: studentId,
                 studentName: data.name,
                 studentEmail: data.email,
-                quizId: String(quizId), // Stringify for reliable frontend comparison
+                quizId: String(quizId),
                 event_type: event_type,
                 time: new Date(),
             });
@@ -63,7 +63,7 @@ exports.getCheatingLogs = async (req, res, next) => {
 
         const [rows] = await db.execute(`
             SELECT 
-                cl.student_id, -- ⬅️ ADD THIS LINE
+                cl.student_id, 
                 cl.event_type, 
                 cl.created_at AS time, 
                 u.name AS studentName, 
