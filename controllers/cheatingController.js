@@ -38,6 +38,7 @@ exports.reportCheating = async (req, res, next) => {
             console.log(`📢 Emitting cheating alert to ${teacherRoom}`);
 
             global.io.to(teacherRoom).emit("cheating_alert", {
+                studentId: studentId,
                 studentName: data.name,
                 studentEmail: data.email,
                 quizId: String(quizId), // Stringify for reliable frontend comparison
@@ -60,9 +61,9 @@ exports.getCheatingLogs = async (req, res, next) => {
     try {
         const { quizId } = req.params;
 
-        // Destructure to get ONLY the rows (the first element)
         const [rows] = await db.execute(`
             SELECT 
+                cl.student_id, -- ⬅️ ADD THIS LINE
                 cl.event_type, 
                 cl.created_at AS time, 
                 u.name AS studentName, 
@@ -75,9 +76,6 @@ exports.getCheatingLogs = async (req, res, next) => {
             ORDER BY cl.created_at DESC
         `, [quizId]);
 
-
-        console.log(`Sending ${rows.length} logs for Quiz ${quizId}`);
-
         res.json(rows);
     } catch (err) {
         console.error("Controller Error:", err);
@@ -85,10 +83,10 @@ exports.getCheatingLogs = async (req, res, next) => {
     }
 };
 
-
 exports.assignZero = async (req, res, next) => {
     // Destructure inputs and ensure they exist
-    const { studentId, quizId, allAtOnce } = req.body;
+    const studentId = req.body.studentId || req.body.student_id;
+    const { quizId, allAtOnce } = req.body;
 
     try {
         // 1. Identify which students to target
