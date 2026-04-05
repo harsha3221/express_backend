@@ -20,8 +20,7 @@ exports.reportCheating = async (req, res, next) => {
             [studentId, quizId, event_type]
         );
 
-        // 3. Get student + teacher info
-        // Added a check to ensure we actually find the record
+
         const [results] = await db.execute(`
             SELECT u.name, u.email, q.teacher_id
             FROM users u
@@ -32,7 +31,7 @@ exports.reportCheating = async (req, res, next) => {
 
         const data = results[0];
 
-        // 4. Emit to teacher only if data was found
+
         if (data && global.io) {
             const teacherRoom = `teacher_${data.teacher_id}`;
 
@@ -76,12 +75,65 @@ exports.getCheatingLogs = async (req, res, next) => {
             ORDER BY cl.created_at DESC
         `, [quizId]);
 
-        // Explicitly log this to your NODE terminal to see what's being sent
+
         console.log(`Sending ${rows.length} logs for Quiz ${quizId}`);
 
-        res.json(rows); // Send the array of objects directly
+        res.json(rows);
     } catch (err) {
         console.error("Controller Error:", err);
+        next(err);
+    }
+};
+
+
+exports.assignZero = async (req, res, next) => {
+    const { studentId, quizId, allAtOnce } = req.body;
+    const teacherId = req.session.user.teacher_id;
+
+    try {
+        // 1. Identify which students to target
+        let targetStudents = [];
+
+        if (allAtOnce) {
+            // Find all students who have logged cheating for this quiz
+            const [cheaters] = await db.execute(
+                "SELECT DISTINCT student_id FROM cheating_logs WHERE quiz_id = ?",
+                [quizId]
+            );
+            targetStudents = cheaters.map(c => c.student_id);
+        } else {
+            targetStudents = [studentId];
+        }
+
+        if (targetStudents.length === 0) {
+            return res.status(400).json({ message: "No students found to penalize." });
+        }
+
+        for (let id of targetStudents) {
+
+            await db.execute(`
+                INSERT INTO quiz_results (student_id, quiz_id, total_marks, obtained_marks)
+                VALUES (?, ?, (SELECT SUM(marks) FROM questions WHERE quiz_id = ?), 0)
+                ON DUPLICATE KEY UPDATE obtained_marks = 0
+            `, [id, quizId, quizId]);
+
+            // 3. Mark the attempt as submitted so they can't continue
+            await db.execute(
+                "UPDATE student_quiz_attempts SET submitted = 1, submitted_at = NOW() WHERE student_id = ? AND quiz_id = ?",
+                [id, quizId]
+            );
+
+            // 4. WebSocket Signal: Kick the student out
+            if (global.io) {
+                global.io.to(`student_${id}`).emit("force_logout_zero", {
+                    message: "You have been disqualified by the teacher for this quiz."
+                });
+            }
+        }
+
+        res.json({ message: `Successfully assigned zero to ${targetStudents.length} student(s).` });
+    } catch (err) {
+        console.error("❌ Error assigning zero:", err);
         next(err);
     }
 };
