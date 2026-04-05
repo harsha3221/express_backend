@@ -9,9 +9,7 @@ const StudentQuizAttempt = require('../model/studentQuizAttempt');
 const QuizResult = require('../model/quizResult.js');
 const StudentAnswer = require('../model/studentAnswer');
 
-/* ============================================================
-   Utility: Shuffle
-============================================================ */
+
 function shuffleArray(arr) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -22,9 +20,7 @@ function shuffleArray(arr) {
 }
 
 
-/* ============================================================
-   Helper: Ensure Enrollment
-============================================================ */
+
 async function ensureStudentAndEnrollment(studentId, quizId) {
   const quiz = await Quiz.getQuizWithSubjectAndTeacher(quizId);
 
@@ -40,9 +36,7 @@ async function ensureStudentAndEnrollment(studentId, quizId) {
 }
 
 
-/* ============================================================
-   CREATE ATTEMPT
-============================================================ */
+
 exports.createQuizAttempt = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== "student")
@@ -66,9 +60,7 @@ exports.createQuizAttempt = async (req, res, next) => {
 };
 
 
-/* ============================================================
-   DASHBOARD
-============================================================ */
+
 exports.getRegisteredCourses = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
@@ -93,9 +85,7 @@ exports.getRegisteredCourses = async (req, res, next) => {
   }
 };
 
-/* ============================================================
-   AVAILABLE COURSES
-============================================================ */
+
 exports.getAvailableCourses = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
@@ -114,9 +104,7 @@ exports.getAvailableCourses = async (req, res, next) => {
 };
 
 
-/* ============================================================
-   JOIN SUBJECT
-============================================================ */
+
 exports.joinSubject = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
@@ -143,9 +131,7 @@ exports.joinSubject = async (req, res, next) => {
 };
 
 
-/* ============================================================
-   GET SUBJECT QUIZZES
-============================================================ */
+
 exports.getSubjectQuizzes = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
@@ -184,9 +170,7 @@ exports.getSubjectQuizzes = async (req, res, next) => {
   }
 };
 
-/* ============================================================
-   START QUIZ (Updated Logic)
-============================================================ */
+
 exports.startQuizForStudent = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
@@ -233,9 +217,7 @@ exports.startQuizForStudent = async (req, res, next) => {
     next(err);
   }
 };
-/* ============================================================
-   SAVE ANSWER
-============================================================ */
+
 exports.saveStudentAnswer = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
@@ -247,17 +229,35 @@ exports.saveStudentAnswer = async (req, res, next) => {
 
     const { quiz } = await ensureStudentAndEnrollment(studentId, quizId);
 
+    // 1. Get the student's specific attempt to find when they started
+    const attempt = await StudentQuizAttempt.createIfNotExists(studentId, quizId);
+
+    if (attempt.submitted) {
+      return res.status(403).json({ message: "Quiz already submitted" });
+    }
+
     const now = new Date();
 
-    if (quiz.start_time && new Date(quiz.start_time) > now)
-      return res.status(403).json({ message: "Quiz not started" });
+    // 2. Prevent saving before the quiz officially opens
+    if (quiz.start_time && new Date(quiz.start_time) > now) {
+      return res.status(403).json({ message: "Quiz has not started yet" });
+    }
 
-    if (quiz.end_time && new Date(quiz.end_time) < now)
-      return res.status(403).json({ message: "Quiz ended" });
+    // 3. Logic Change: Instead of checking the global end_time, 
+    // check if their personal duration has expired.
+    if (attempt.started_at && quiz.duration_minutes) {
+      const startTime = new Date(attempt.started_at).getTime();
+      const durationMs = quiz.duration_minutes * 60 * 1000;
+      const personalDeadline = startTime + durationMs;
+
+      // Add a small grace period (e.g., 5-10 seconds) for network latency
+      if (now.getTime() > personalDeadline + 5000) {
+        return res.status(403).json({ message: "Your personal quiz time has expired" });
+      }
+    }
 
     const ids = option_ids || (option_id ? [option_id] : []);
 
-    // ✅ clean call — no SQL here
     await StudentAnswer.replaceAnswers(
       studentId,
       quizId,
@@ -273,9 +273,6 @@ exports.saveStudentAnswer = async (req, res, next) => {
 };
 
 
-/* ============================================================
-   SUBMIT QUIZ
-============================================================ */
 exports.submitStudentQuiz = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== 'student')
@@ -297,9 +294,7 @@ exports.submitStudentQuiz = async (req, res, next) => {
   }
 };
 
-/* ============================================================
-   QUIZ SUMMARY
-============================================================ */
+
 exports.getQuizSummary = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== "student")
@@ -326,9 +321,6 @@ exports.getQuizSummary = async (req, res, next) => {
 };
 
 
-/* ============================================================
-   GET RESULT
-============================================================ */
 exports.getStudentQuizResult = async (req, res, next) => {
   try {
     if (!req.session.user || req.session.user.role !== "student")
