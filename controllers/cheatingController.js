@@ -158,3 +158,38 @@ exports.assignZero = async (req, res, next) => {
         next(err);
     }
 };
+// Add this to your existing cheatingController.js
+
+exports.getCheatingAnalytics = async (req, res, next) => {
+    try {
+        const { quizId } = req.params;
+
+        const [rows] = await db.execute(`
+            SELECT 
+                s.id AS studentId,
+                u.name AS studentName,
+                u.email AS studentEmail,
+                COUNT(cl.id) AS totalIncidents,
+                -- Check if a result already exists with 0 marks
+                EXISTS(SELECT 1 FROM quiz_results qr WHERE qr.student_id = s.id AND qr.quiz_id = ? AND qr.obtained_marks = 0) AS isPenalized
+            FROM students s
+            JOIN users u ON s.user_id = u.id
+            JOIN cheating_logs cl ON cl.student_id = s.id
+            WHERE cl.quiz_id = ?
+            GROUP BY s.id
+            ORDER BY totalIncidents DESC
+        `, [quizId, quizId]);
+
+        // Add a "Risk Level" logic in JS for flexibility
+        const analytics = rows.map(row => ({
+            ...row,
+            riskLevel: row.totalIncidents > 5 ? "High" : row.totalIncidents > 2 ? "Medium" : "Low",
+            riskColor: row.totalIncidents > 5 ? "#d9534f" : row.totalIncidents > 2 ? "#f0ad4e" : "#5bc0de"
+        }));
+
+        res.json(analytics);
+    } catch (err) {
+        console.error("Analytics Error:", err);
+        next(err);
+    }
+};

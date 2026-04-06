@@ -49,15 +49,21 @@ class QuizResult {
 
     static async getResultsForQuiz(quizId) {
         const [rows] = await db.execute(
-            `SELECT u.name AS student_name,
-              r.total_marks,
-              r.obtained_marks,
-              r.evaluated_at
-       FROM quiz_results r
-       JOIN students s ON r.student_id = s.id
-       JOIN users u ON s.user_id = u.id
-       WHERE r.quiz_id = ?
-       ORDER BY u.name`,
+            `SELECT 
+            u.name AS student_name,
+            r.student_id,
+            r.total_marks,
+            r.obtained_marks,
+            r.evaluated_at,
+            (SELECT COUNT(*) 
+             FROM cheating_logs cl 
+             WHERE cl.student_id = r.student_id 
+             AND cl.quiz_id = r.quiz_id) AS cheating_count
+        FROM quiz_results r
+        JOIN students s ON r.student_id = s.id
+        JOIN users u ON s.user_id = u.id
+        WHERE r.quiz_id = ?
+        ORDER BY u.name ASC`,
             [quizId]
         );
         return rows;
