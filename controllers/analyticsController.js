@@ -1,17 +1,26 @@
 const db = require("../config/database");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// Initialize once outside the handler
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
+// We will initialize the model inside or sanitize the key to be safe
 exports.getAIAnalytics = async (req, res, next) => {
     try {
         const { quizId } = req.params;
 
+        // 1. SANITIZE API KEY
+        // This removes hidden spaces or newlines that often happen when pasting in Render
+        const rawKey = process.env.GEMINI_API_KEY || "";
+        const sanitizedKey = rawKey.trim().replace(/[\n\r]/g, "");
+
+        if (!sanitizedKey) {
+            throw new Error("GEMINI_API_KEY is missing in environment variables.");
+        }
+
+        const genAI = new GoogleGenerativeAI(sanitizedKey);
+
         // DEBUG LOG: See what ID is being requested in Render
         console.log(`[AI-ANALYTICS] Processing request for Quiz ID: ${quizId}`);
 
-        // 1. Fetch Quiz Context & Question Statistics
+        // 2. Fetch Quiz Context & Question Statistics
         const [stats] = await db.execute(`
             SELECT 
                 COALESCE(s.name, 'General Subject') AS subject_name,
@@ -31,13 +40,12 @@ exports.getAIAnalytics = async (req, res, next) => {
             GROUP BY q.id, qz.id, s.id
         `, [quizId]);
 
-        // 2. ENHANCED VALIDATION & DEBUGGING
+        // 3. ENHANCED VALIDATION
         console.log(`[AI-ANALYTICS] DB Query returned ${stats.length} rows.`);
 
         if (stats.length === 0 || !stats[0].quiz_title) {
-            console.error(`[AI-ANALYTICS] 404 Error: Quiz ${quizId} not found.`);
             return res.status(404).json({
-                message: "Quiz not found. Please ensure this quiz exists in the production database.",
+                message: "Quiz not found or has no questions. Check production DB.",
                 debug_quiz_id: quizId
             });
         }
@@ -46,18 +54,17 @@ exports.getAIAnalytics = async (req, res, next) => {
 
         if (totalAttempts === 0) {
             return res.status(200).json({
-                summary: "No student attempts recorded yet. AI analysis requires at least one submission.",
+                summary: "No student attempts recorded yet.",
                 topicsToImprove: [],
                 knowledgeVoids: [],
                 hardQuestions: [],
-                suggestions: "Wait for students to complete the quiz before running AI analysis."
+                suggestions: "Wait for students to complete the quiz."
             });
         }
 
-        // 3. Format data for AI
+        // 4. Format data for AI
         const subjectName = stats[0].subject_name;
         const quizTitle = stats[0].quiz_title;
-
         const processedStats = stats
             .filter(row => row.question_id !== null)
             .map(row => {
@@ -68,7 +75,6 @@ exports.getAIAnalytics = async (req, res, next) => {
                     stats: {
                         totalStudents: totalAttempts,
                         answered,
-                        skipped: totalAttempts - answered,
                         wrong: answered - correct,
                         correct,
                         successRate: totalAttempts > 0 ? ((correct / totalAttempts) * 100).toFixed(2) + '%' : '0%'
@@ -76,26 +82,15 @@ exports.getAIAnalytics = async (req, res, next) => {
                 };
             });
 
-        // 4. Call Gemini - Updated Model naming for latest SDK
+        // 5. Call Gemini - Using 'gemini-1.5-flash-latest' to ensure we bypass versioning issues
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash"
+            model: "gemini-1.5-flash-latest"
         });
 
         const prompt = `
-            You are an Academic Data Analyst. Analyze these quiz results for "${subjectName}" - "${quizTitle}".
-            
-            DATA:
-            ${JSON.stringify(processedStats)}
-
-            TASK:
-            1. Infer sub-topics for each question.
-            2. Identify "Concept Gaps" (high wrong counts).
-            3. Identify "Knowledge Voids" (high skip counts).
-            4. Identify "Critical Questions" (success < 40%).
-            5. Provide a "Reteaching Strategy".
-
-            RESPONSE FORMAT:
-            Return ONLY a valid JSON object. No preamble, no markdown code blocks.
+            Analyze quiz results for "${subjectName}" - "${quizTitle}".
+            DATA: ${JSON.stringify(processedStats)}
+            RESPONSE FORMAT (Strict JSON):
             {
                 "summary": "...",
                 "topicsToImprove": ["..."],
@@ -109,33 +104,36 @@ exports.getAIAnalytics = async (req, res, next) => {
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: {
                 responseMimeType: "application/json",
-                temperature: 0.5,
+                temperature: 0.4,
             },
         });
 
         const response = await result.response;
         let responseText = response.text();
 
-        // Clean up any potential markdown formatting
+        // Clean up markdown if AI includes it
         responseText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
 
         try {
-            const parsedData = JSON.parse(responseText);
-            res.json(parsedData);
+            res.json(JSON.parse(responseText));
         } catch (parseErr) {
-            console.error("JSON Parse Error on AI output:", responseText);
-            throw new Error("AI returned invalid JSON format.");
+            console.error("AI Output parsing failed:", responseText);
+            throw new Error("AI output was not valid JSON.");
         }
 
     } catch (err) {
         console.error("❌ AI ERROR:", err);
-        // Better error messages for the UI
-        const errorMessage = err.status === 404
-            ? "The AI model version is currently unavailable. Ensure the SDK is updated."
-            : "AI Analysis failed. Check server logs.";
+
+        // Final fallback error logic
+        let userMessage = "AI Analysis failed. Please check server logs.";
+        if (err.message.includes("404") || err.message.includes("version")) {
+            userMessage = "AI model configuration error. Please ensure the API key is valid and SDK is updated.";
+        } else if (err.message.includes("API_KEY_INVALID")) {
+            userMessage = "Invalid API Key. Check Render environment variables.";
+        }
 
         res.status(err.status || 500).json({
-            message: errorMessage,
+            message: userMessage,
             error: process.env.NODE_ENV === 'development' ? err.message : undefined
         });
     }
