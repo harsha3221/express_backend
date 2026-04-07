@@ -84,7 +84,7 @@ exports.getAIAnalytics = async (req, res, next) => {
 
         // 5. Call Gemini - Using 'gemini-1.5-flash-latest' to ensure we bypass versioning issues
         const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash-latest"
+            model: "gemini-1.5-flash"
         });
 
         const prompt = `
