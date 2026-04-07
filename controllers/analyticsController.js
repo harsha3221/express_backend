@@ -1,13 +1,11 @@
 const db = require("../config/database");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenAI } = require("@google/genai");
 
-// We will initialize the model inside or sanitize the key to be safe
 exports.getAIAnalytics = async (req, res, next) => {
     try {
         const { quizId } = req.params;
 
         // 1. SANITIZE API KEY
-        // This removes hidden spaces or newlines that often happen when pasting in Render
         const rawKey = process.env.GEMINI_API_KEY || "";
         const sanitizedKey = rawKey.trim().replace(/[\n\r]/g, "");
 
@@ -15,12 +13,13 @@ exports.getAIAnalytics = async (req, res, next) => {
             throw new Error("GEMINI_API_KEY is missing in environment variables.");
         }
 
-        const genAI = new GoogleGenerativeAI(sanitizedKey);
+        const ai = new GoogleGenAI({
+            apiKey: sanitizedKey,
+        });
 
-        // DEBUG LOG: See what ID is being requested in Render
         console.log(`[AI-ANALYTICS] Processing request for Quiz ID: ${quizId}`);
 
-        // 2. Fetch Quiz Context & Question Statistics
+        // 2. Fetch Quiz Data
         const [stats] = await db.execute(`
             SELECT 
                 COALESCE(s.name, 'General Subject') AS subject_name,
@@ -40,12 +39,12 @@ exports.getAIAnalytics = async (req, res, next) => {
             GROUP BY q.id, qz.id, s.id
         `, [quizId]);
 
-        // 3. ENHANCED VALIDATION
         console.log(`[AI-ANALYTICS] DB Query returned ${stats.length} rows.`);
 
+        // 3. VALIDATION
         if (stats.length === 0 || !stats[0].quiz_title) {
             return res.status(404).json({
-                message: "Quiz not found or has no questions. Check production DB.",
+                message: "Quiz not found or has no questions.",
                 debug_quiz_id: quizId
             });
         }
@@ -62,14 +61,16 @@ exports.getAIAnalytics = async (req, res, next) => {
             });
         }
 
-        // 4. Format data for AI
+        // 4. Process stats
         const subjectName = stats[0].subject_name;
         const quizTitle = stats[0].quiz_title;
+
         const processedStats = stats
             .filter(row => row.question_id !== null)
             .map(row => {
                 const answered = row.times_answered || 0;
                 const correct = row.correct_count || 0;
+
                 return {
                     question: row.question_text,
                     stats: {
@@ -77,64 +78,63 @@ exports.getAIAnalytics = async (req, res, next) => {
                         answered,
                         wrong: answered - correct,
                         correct,
-                        successRate: totalAttempts > 0 ? ((correct / totalAttempts) * 100).toFixed(2) + '%' : '0%'
+                        successRate:
+                            totalAttempts > 0
+                                ? ((correct / totalAttempts) * 100).toFixed(2) + "%"
+                                : "0%"
                     }
                 };
             });
 
-        // 5. Call Gemini - Using 'gemini-1.5-flash-latest' to ensure we bypass versioning issues
-        const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash"
-        });
-
+        // 5. Prompt
         const prompt = `
-            Analyze quiz results for "${subjectName}" - "${quizTitle}".
-            DATA: ${JSON.stringify(processedStats)}
-            RESPONSE FORMAT (Strict JSON):
-            {
-                "summary": "...",
-                "topicsToImprove": ["..."],
-                "knowledgeVoids": ["..."],
-                "hardQuestions": [{"question": "...", "reason": "..."}],
-                "suggestions": "..."
-            }
-        `;
+Analyze quiz results for "${subjectName}" - "${quizTitle}".
 
-        const result = await model.generateContent({
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
-            generationConfig: {
-                responseMimeType: "application/json",
-                temperature: 0.4,
-            },
+DATA:
+${JSON.stringify(processedStats)}
+
+Return ONLY valid JSON in this format:
+{
+  "summary": "...",
+  "topicsToImprove": ["..."],
+  "knowledgeVoids": ["..."],
+  "hardQuestions": [{"question": "...", "reason": "..."}],
+  "suggestions": "..."
+}
+`;
+
+        // 6. AI CALL (NEW SDK)
+        const aiResponse = await ai.models.generateContent({
+            model: "gemini-1.5-flash",
+            contents: prompt,
         });
 
-        const response = await result.response;
-        let responseText = response.text();
+        let responseText = aiResponse.text;
 
-        // Clean up markdown if AI includes it
+        // Clean markdown if present
         responseText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
 
         try {
             res.json(JSON.parse(responseText));
         } catch (parseErr) {
-            console.error("AI Output parsing failed:", responseText);
-            throw new Error("AI output was not valid JSON.");
+            console.error("❌ AI JSON Parse Failed:", responseText);
+            throw new Error("AI returned invalid JSON format.");
         }
 
     } catch (err) {
         console.error("❌ AI ERROR:", err);
 
-        // Final fallback error logic
-        let userMessage = "AI Analysis failed. Please check server logs.";
-        if (err.message.includes("404") || err.message.includes("version")) {
-            userMessage = "AI model configuration error. Please ensure the API key is valid and SDK is updated.";
-        } else if (err.message.includes("API_KEY_INVALID")) {
-            userMessage = "Invalid API Key. Check Render environment variables.";
+        let userMessage = "AI Analysis failed.";
+
+        if (err.message.includes("API key")) {
+            userMessage = "Invalid or missing API key.";
+        } else if (err.message.includes("model")) {
+            userMessage = "Invalid model or API version issue.";
         }
 
-        res.status(err.status || 500).json({
+        res.status(500).json({
             message: userMessage,
-            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+            error: process.env.NODE_ENV === "development" ? err.message : undefined
         });
     }
 };
