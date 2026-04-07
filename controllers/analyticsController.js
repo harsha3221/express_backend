@@ -1,8 +1,7 @@
 const db = require("../config/database");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// Update the constructor to explicitly use the stable v1 API version
-// This prevents the 404 error where the SDK tries to find models on v1beta
+// Initialize once outside the handler
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 exports.getAIAnalytics = async (req, res, next) => {
@@ -29,21 +28,19 @@ exports.getAIAnalytics = async (req, res, next) => {
             GROUP BY q.id, qz.id, s.id
         `, [quizId]);
 
-        console.log(`[AI Analytics] Query results for Quiz ${quizId}:`, stats.length, "rows");
-
         // 2. Validation
         if (stats.length === 0 || !stats[0].quiz_title) {
-            return res.status(404).json({ message: "Quiz not found or no questions available for analysis." });
+            return res.status(404).json({ message: "Quiz not found or no data available." });
         }
 
-        const totalAttempts = stats[0].total_students_count;
+        const totalAttempts = stats[0].total_students_count || 0;
         if (totalAttempts === 0) {
             return res.status(200).json({
-                summary: "No students have attempted this quiz yet. AI analysis will be available once submissions start coming in.",
+                summary: "No students have attempted this quiz yet. Analysis will appear once students submit.",
                 topicsToImprove: [],
                 knowledgeVoids: [],
                 hardQuestions: [],
-                suggestions: "Wait for students to complete the quiz to see insights."
+                suggestions: "Wait for student submissions to generate AI insights."
             });
         }
 
@@ -56,70 +53,85 @@ exports.getAIAnalytics = async (req, res, next) => {
             .map(row => {
                 const answered = row.times_answered || 0;
                 const correct = row.correct_count || 0;
-                const skipped = totalAttempts - answered;
-                const wrong = answered - correct;
-                const successRate = totalAttempts > 0 ? ((correct / totalAttempts) * 100).toFixed(2) : 0;
-
                 return {
                     question: row.question_text,
                     stats: {
                         totalStudents: totalAttempts,
                         answered,
-                        skipped,
-                        wrong,
+                        skipped: totalAttempts - answered,
+                        wrong: answered - correct,
                         correct,
-                        successRate: `${successRate}%`
+                        successRate: totalAttempts > 0 ? ((correct / totalAttempts) * 100).toFixed(2) + '%' : '0%'
                     }
                 };
             });
 
-        // 4. Prepare the AI Prompt
+        // 4. Call Gemini with explicit structure
+        // 'gemini-1.5-flash' is the stable recommended model name
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash"
+        });
+
         const prompt = `
-            You are an Academic Data Analyst. Analyze the following quiz results for the subject "${subjectName}" and quiz "${quizTitle}".
+            You are an Academic Data Analyst. Analyze these quiz results for "${subjectName}" - "${quizTitle}".
             
-            RAW DATA:
+            DATA:
             ${JSON.stringify(processedStats)}
 
             TASK:
-            1. Infer the specific sub-topics for each question based on text.
-            2. Identify "Concept Gaps": Topics with high "wrong" counts.
-            3. Identify "Knowledge Voids": Topics with high "skipped" counts.
-            4. Identify "Critical Questions": Success rate below 40%.
-            5. Provide a "Reteaching Strategy" for the next lecture.
+            1. Infer sub-topics for each question.
+            2. Identify "Concept Gaps" (high wrong counts).
+            3. Identify "Knowledge Voids" (high skip counts).
+            4. Identify "Critical Questions" (success < 40%).
+            5. Provide a "Reteaching Strategy".
 
             RESPONSE FORMAT:
-            You MUST return a valid JSON object ONLY.
+            Return ONLY a valid JSON object:
             {
-                "summary": "Overview of performance",
-                "topicsToImprove": ["Topic A", "Topic B"],
-                "knowledgeVoids": ["Unattempted Topic"],
+                "summary": "...",
+                "topicsToImprove": ["..."],
+                "knowledgeVoids": ["..."],
                 "hardQuestions": [{"question": "...", "reason": "..."}],
-                "suggestions": "Advice"
+                "suggestions": "..."
             }
         `;
 
-        // 5. Call Gemini with explicit model name and versioning fix
-        // Using "gemini-1.5-flash-latest" or "gemini-1.5-flash" specifically
-        const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
-            generationConfig: { responseMimeType: "application/json" }
+        // Use the explicit generationConfig here
+        const result = await model.generateContent({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+                responseMimeType: "application/json",
+                temperature: 0.7,
+                maxOutputTokens: 1000,
+            },
         });
 
-        const result = await model.generateContent(prompt);
         const responseText = result.response.text();
+
+        // Final safety check: if responseText is empty or not JSON
+        if (!responseText) {
+            throw new Error("Empty response from AI model");
+        }
 
         res.json(JSON.parse(responseText));
 
     } catch (err) {
-        // Detailed logging for Render console
-        console.error("❌ AI Analytics Error Detail:", err);
+        // Log the full error to Render's console so you can see it in logs
+        console.error("❌ AI ERROR:", err);
 
-        // If it's a specific Google error, send that back
-        const errorMessage = err.response?.data?.error?.message || err.message;
+        // Standardize the error response
+        const statusCode = err.status || 500;
+        let errorMessage = "AI Analysis failed. Please try again later.";
 
-        res.status(500).json({
-            message: "AI Analysis failed",
-            error: errorMessage
+        if (err.message?.includes("API key")) {
+            errorMessage = "Invalid API Configuration. Check environment variables.";
+        } else if (err.message?.includes("quota")) {
+            errorMessage = "AI rate limit exceeded. Please wait a moment.";
+        }
+
+        res.status(statusCode).json({
+            message: errorMessage,
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
         });
     }
 };
