@@ -4,7 +4,7 @@ const app = express();
 
 const db = require("./config/database");
 const authRoute = require("./routes/auth");
-const analyticsController = require("./controllers/analyticsController");
+const analyticsRoutes = require("./routes/analytics");
 const teacherRoute = require("./routes/teacher");
 const studentRoutes = require("./routes/student");
 const quizRoutes = require("./routes/quiz");
@@ -56,6 +56,7 @@ const csrfProtection = csrf({ cookie: false });
 
 /* ---------------- ROUTES ---------------- */
 app.use(authRoute);
+app.use("/analytics", analyticsRoutes);
 
 
 app.get("/csrf-token", csrfProtection, (req, res) => {
@@ -78,7 +79,7 @@ app.use("/quiz", csrfProtection, quizRoutes);
 app.use("/teacher", csrfProtection, teacherRoute);
 app.use("/student", csrfProtection, studentRoutes);
 app.use("/api", csrfProtection, cheatingRoutes);
-app.get('/analytics/ai-report/:quizId', analyticsController.getAIAnalytics);
+
 /* -------------- ERROR HANDLER ------------- */
 const errorHandler = require("./middlewares/errorHandler");
 app.use(errorHandler);
