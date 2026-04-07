@@ -1,6 +1,7 @@
 const db = require("../config/database");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
+// Initialize once outside the handler
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 exports.getAIAnalytics = async (req, res, next) => {
@@ -11,7 +12,6 @@ exports.getAIAnalytics = async (req, res, next) => {
         console.log(`[AI-ANALYTICS] Processing request for Quiz ID: ${quizId}`);
 
         // 1. Fetch Quiz Context & Question Statistics
-        // CHANGED: Using LEFT JOIN on subjects so it doesn't fail if subject_id is missing/mismatched
         const [stats] = await db.execute(`
             SELECT 
                 COALESCE(s.name, 'General Subject') AS subject_name,
@@ -35,16 +35,15 @@ exports.getAIAnalytics = async (req, res, next) => {
         console.log(`[AI-ANALYTICS] DB Query returned ${stats.length} rows.`);
 
         if (stats.length === 0 || !stats[0].quiz_title) {
-            console.error(`[AI-ANALYTICS] 404 Error: Quiz ${quizId} not found or has no questions.`);
+            console.error(`[AI-ANALYTICS] 404 Error: Quiz ${quizId} not found.`);
             return res.status(404).json({
-                message: "Quiz not found. Please ensure this quiz exists and has questions assigned in the production database.",
+                message: "Quiz not found. Please ensure this quiz exists in the production database.",
                 debug_quiz_id: quizId
             });
         }
 
         const totalAttempts = stats[0].total_students_count || 0;
 
-        // Handle case where quiz exists but no one has taken it yet
         if (totalAttempts === 0) {
             return res.status(200).json({
                 summary: "No student attempts recorded yet. AI analysis requires at least one submission.",
@@ -77,8 +76,10 @@ exports.getAIAnalytics = async (req, res, next) => {
                 };
             });
 
-        // 4. Call Gemini
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        // 4. Call Gemini - Updated Model naming for latest SDK
+        const model = genAI.getGenerativeModel({
+            model: "gemini-1.5-flash"
+        });
 
         const prompt = `
             You are an Academic Data Analyst. Analyze these quiz results for "${subjectName}" - "${quizTitle}".
@@ -94,7 +95,7 @@ exports.getAIAnalytics = async (req, res, next) => {
             5. Provide a "Reteaching Strategy".
 
             RESPONSE FORMAT:
-            Return ONLY a valid JSON object. Do not include markdown formatting like \`\`\`json.
+            Return ONLY a valid JSON object. No preamble, no markdown code blocks.
             {
                 "summary": "...",
                 "topicsToImprove": ["..."],
@@ -108,27 +109,33 @@ exports.getAIAnalytics = async (req, res, next) => {
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: {
                 responseMimeType: "application/json",
-                temperature: 0.7,
-                maxOutputTokens: 1000,
+                temperature: 0.5,
             },
         });
 
-        let responseText = result.response.text();
+        const response = await result.response;
+        let responseText = response.text();
 
-        // Safety: Clean up Gemini's response if it included markdown code blocks
+        // Clean up any potential markdown formatting
         responseText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
 
-        if (!responseText) {
-            throw new Error("Empty response from AI model");
+        try {
+            const parsedData = JSON.parse(responseText);
+            res.json(parsedData);
+        } catch (parseErr) {
+            console.error("JSON Parse Error on AI output:", responseText);
+            throw new Error("AI returned invalid JSON format.");
         }
-
-        res.json(JSON.parse(responseText));
 
     } catch (err) {
         console.error("❌ AI ERROR:", err);
-        const statusCode = err.status || 500;
-        res.status(statusCode).json({
-            message: "AI Analysis failed. Check server logs.",
+        // Better error messages for the UI
+        const errorMessage = err.status === 404
+            ? "The AI model version is currently unavailable. Ensure the SDK is updated."
+            : "AI Analysis failed. Check server logs.";
+
+        res.status(err.status || 500).json({
+            message: errorMessage,
             error: process.env.NODE_ENV === 'development' ? err.message : undefined
         });
     }
