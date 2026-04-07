@@ -4,6 +4,7 @@ const app = express();
 
 const db = require("./config/database");
 const authRoute = require("./routes/auth");
+const analyticsController = require("./controllers/analyticsController");
 const teacherRoute = require("./routes/teacher");
 const studentRoutes = require("./routes/student");
 const quizRoutes = require("./routes/quiz");
@@ -77,7 +78,7 @@ app.use("/quiz", csrfProtection, quizRoutes);
 app.use("/teacher", csrfProtection, teacherRoute);
 app.use("/student", csrfProtection, studentRoutes);
 app.use("/api", csrfProtection, cheatingRoutes);
-
+app.get('/analytics/ai-report/:quizId', analyticsController.getAIAnalytics);
 /* -------------- ERROR HANDLER ------------- */
 const errorHandler = require("./middlewares/errorHandler");
 app.use(errorHandler);
