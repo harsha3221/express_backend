@@ -50,44 +50,41 @@ class QuizResult {
     static async getResultsForQuiz(quizId) {
         const [rows] = await db.execute(
             `SELECT 
-            u.name AS student_name,
-            r.student_id,
-            r.total_marks,
-            r.obtained_marks,
-            r.evaluated_at,
-            (SELECT COUNT(*) 
-             FROM cheating_logs cl 
-             WHERE cl.student_id = r.student_id 
-             AND cl.quiz_id = r.quiz_id) AS cheating_count
-        FROM quiz_results r
-        JOIN students s ON r.student_id = s.id
-        JOIN users u ON s.user_id = u.id
-        WHERE r.quiz_id = ?
-        ORDER BY u.name ASC`,
+                u.name AS student_name,
+                r.student_id,
+                r.total_marks,
+                r.obtained_marks,
+                r.evaluated_at,
+                (SELECT COUNT(*) 
+                 FROM cheating_logs cl 
+                 WHERE cl.student_id = r.student_id 
+                 AND cl.quiz_id = r.quiz_id) AS cheating_count
+            FROM quiz_results r
+            JOIN students s ON r.student_id = s.id
+            JOIN users u ON s.user_id = u.id
+            WHERE r.quiz_id = ?
+            ORDER BY u.name ASC`,
             [quizId]
         );
         return rows;
     }
     static async upsertResultWithTransaction(conn, studentId, quizId, total, obtained) {
-
         const [existing] = await conn.execute(
-            `SELECT id FROM quiz_results 
-     WHERE student_id = ? AND quiz_id = ?`,
+            `SELECT id FROM quiz_results WHERE student_id = ? AND quiz_id = ?`,
             [studentId, quizId]
         );
 
         if (existing.length > 0) {
             await conn.execute(
                 `UPDATE quiz_results 
-       SET total_marks=?, obtained_marks=?, evaluated_at=NOW()
-       WHERE id=?`,
+                 SET total_marks=?, obtained_marks=?, evaluated_at=NOW()
+                 WHERE id=?`,
                 [total, obtained, existing[0].id]
             );
         } else {
             await conn.execute(
-                `INSERT INTO quiz_results 
-       (student_id, quiz_id, total_marks, obtained_marks) 
-       VALUES (?, ?, ?, ?)`,
+                `INSERT INTO quiz_results (student_id, quiz_id, total_marks, obtained_marks) 
+                 VALUES (?, ?, ?, ?)`,
                 [studentId, quizId, total, obtained]
             );
         }
@@ -98,42 +95,62 @@ class QuizResult {
         try {
             await conn.beginTransaction();
 
+            // Fetch all questions, their correct options, and student selections
             const [rows] = await conn.execute(
                 `SELECT q.id AS question_id, q.marks, 
-                o.id AS option_id, o.is_correct,
-                a.option_id AS answered_option
-         FROM questions q
-         LEFT JOIN options o ON q.id = o.question_id
-         LEFT JOIN student_quiz_answers a 
-                ON a.question_id = q.id AND a.student_id = ?
-         WHERE q.quiz_id = ?`,
+                        o.id AS option_id, o.is_correct,
+                        a.option_id AS answered_option
+                 FROM questions q
+                 LEFT JOIN options o ON q.id = o.question_id
+                 LEFT JOIN student_quiz_answers a 
+                        ON a.question_id = q.id AND a.student_id = ?
+                 WHERE q.quiz_id = ?`,
                 [studentId, quizId]
             );
 
             const byQuestion = {};
+
             rows.forEach(r => {
-                if (!byQuestion[r.question_id])
+                if (!byQuestion[r.question_id]) {
                     byQuestion[r.question_id] = {
                         marks: r.marks || 0,
-                        correct: new Set(),
-                        ans: r.answered_option
+                        correctSet: new Set(),
+                        selectedSet: new Set()
                     };
+                }
 
-                if (r.is_correct)
-                    byQuestion[r.question_id].correct.add(r.option_id);
+                // If this option is marked correct in DB, add to correct set
+                if (r.is_correct) {
+                    byQuestion[r.question_id].correctSet.add(r.option_id);
+                }
+
+                // If the student actually selected this specific option row
+                if (r.answered_option && r.answered_option === r.option_id) {
+                    byQuestion[r.question_id].selectedSet.add(r.answered_option);
+                }
             });
 
-            let total = 0, obtained = 0;
+            let totalMarks = 0;
+            let obtainedMarks = 0;
 
-            for (let qid of Object.keys(byQuestion)) {
+            for (let qid in byQuestion) {
                 const q = byQuestion[qid];
-                total += q.marks;
-                if (q.ans && q.correct.has(q.ans))
-                    obtained += q.marks;
+                totalMarks += q.marks;
+
+                // LOGIC: Sets must be identical for the marks to be awarded
+                const isCorrect =
+                    q.correctSet.size === q.selectedSet.size &&
+                    [...q.correctSet].every(id => q.selectedSet.has(id));
+
+                if (isCorrect) {
+                    obtainedMarks += q.marks;
+                }
             }
 
-            await this.upsertResultWithTransaction(conn, studentId, quizId, total, obtained);
+            // Save to quiz_results table
+            await this.upsertResultWithTransaction(conn, studentId, quizId, totalMarks, obtainedMarks);
 
+            // Mark attempt as submitted
             await conn.execute(
                 `UPDATE student_quiz_attempts
                  SET submitted = 1
@@ -142,7 +159,7 @@ class QuizResult {
             );
 
             await conn.commit();
-            return { total, obtained };
+            return { total: totalMarks, obtained: obtainedMarks };
         } catch (err) {
             await conn.rollback();
             throw err;
