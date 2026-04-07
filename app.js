@@ -83,13 +83,4 @@ app.get('/analytics/ai-report/:quizId', analyticsController.getAIAnalytics);
 const errorHandler = require("./middlewares/errorHandler");
 app.use(errorHandler);
 
-/* ---------------- SERVER ---------------- */
-// db.getConnection()
-//   .then(() => {
-//     app.listen(3000, () => {
-//       console.log("database connection successful");
-//       console.log("server running on port 3000");
-//     });
-//   })
-//   .catch(console.error);
 module.exports = { app, sessionMiddleware };
