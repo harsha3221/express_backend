@@ -105,8 +105,13 @@ Return ONLY valid JSON in this format:
 
         // 6. AI CALL (NEW SDK)
         const aiResponse = await ai.models.generateContent({
-            model: "gemini-1.5-flash",
-            contents: prompt,
+            model: "gemini-1.5-pro",
+            contents: [
+                {
+                    role: "user",
+                    parts: [{ text: prompt }]
+                }
+            ],
         });
 
         let responseText = aiResponse.text;
