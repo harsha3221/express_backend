@@ -1,17 +1,20 @@
 const db = require("../config/database");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-// Initialize once outside the handler
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 exports.getAIAnalytics = async (req, res, next) => {
     try {
         const { quizId } = req.params;
 
+        // DEBUG LOG: See what ID is being requested in Render
+        console.log(`[AI-ANALYTICS] Processing request for Quiz ID: ${quizId}`);
+
         // 1. Fetch Quiz Context & Question Statistics
+        // CHANGED: Using LEFT JOIN on subjects so it doesn't fail if subject_id is missing/mismatched
         const [stats] = await db.execute(`
             SELECT 
-                s.name AS subject_name,
+                COALESCE(s.name, 'General Subject') AS subject_name,
                 qz.title AS quiz_title,
                 q.id AS question_id,
                 q.question_text,
@@ -20,7 +23,7 @@ exports.getAIAnalytics = async (req, res, next) => {
                 COUNT(DISTINCT sqa.student_id) AS times_answered,
                 SUM(CASE WHEN o.is_correct = 1 THEN 1 ELSE 0 END) AS correct_count
             FROM quizzes qz
-            JOIN subjects s ON qz.subject_id = s.id
+            LEFT JOIN subjects s ON qz.subject_id = s.id
             LEFT JOIN questions q ON qz.id = q.quiz_id
             LEFT JOIN student_quiz_answers sqa ON q.id = sqa.question_id
             LEFT JOIN options o ON sqa.option_id = o.id AND o.is_correct = 1
@@ -28,19 +31,27 @@ exports.getAIAnalytics = async (req, res, next) => {
             GROUP BY q.id, qz.id, s.id
         `, [quizId]);
 
-        // 2. Validation
+        // 2. ENHANCED VALIDATION & DEBUGGING
+        console.log(`[AI-ANALYTICS] DB Query returned ${stats.length} rows.`);
+
         if (stats.length === 0 || !stats[0].quiz_title) {
-            return res.status(404).json({ message: "Quiz not found or no data available." });
+            console.error(`[AI-ANALYTICS] 404 Error: Quiz ${quizId} not found or has no questions.`);
+            return res.status(404).json({
+                message: "Quiz not found. Please ensure this quiz exists and has questions assigned in the production database.",
+                debug_quiz_id: quizId
+            });
         }
 
         const totalAttempts = stats[0].total_students_count || 0;
+
+        // Handle case where quiz exists but no one has taken it yet
         if (totalAttempts === 0) {
             return res.status(200).json({
-                summary: "No students have attempted this quiz yet. Analysis will appear once students submit.",
+                summary: "No student attempts recorded yet. AI analysis requires at least one submission.",
                 topicsToImprove: [],
                 knowledgeVoids: [],
                 hardQuestions: [],
-                suggestions: "Wait for student submissions to generate AI insights."
+                suggestions: "Wait for students to complete the quiz before running AI analysis."
             });
         }
 
@@ -66,11 +77,8 @@ exports.getAIAnalytics = async (req, res, next) => {
                 };
             });
 
-        // 4. Call Gemini with explicit structure
-        // 'gemini-1.5-flash' is the stable recommended model name
-        const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash"
-        });
+        // 4. Call Gemini
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
         const prompt = `
             You are an Academic Data Analyst. Analyze these quiz results for "${subjectName}" - "${quizTitle}".
@@ -86,7 +94,7 @@ exports.getAIAnalytics = async (req, res, next) => {
             5. Provide a "Reteaching Strategy".
 
             RESPONSE FORMAT:
-            Return ONLY a valid JSON object:
+            Return ONLY a valid JSON object. Do not include markdown formatting like \`\`\`json.
             {
                 "summary": "...",
                 "topicsToImprove": ["..."],
@@ -96,7 +104,6 @@ exports.getAIAnalytics = async (req, res, next) => {
             }
         `;
 
-        // Use the explicit generationConfig here
         const result = await model.generateContent({
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: {
@@ -106,9 +113,11 @@ exports.getAIAnalytics = async (req, res, next) => {
             },
         });
 
-        const responseText = result.response.text();
+        let responseText = result.response.text();
 
-        // Final safety check: if responseText is empty or not JSON
+        // Safety: Clean up Gemini's response if it included markdown code blocks
+        responseText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+
         if (!responseText) {
             throw new Error("Empty response from AI model");
         }
@@ -116,21 +125,10 @@ exports.getAIAnalytics = async (req, res, next) => {
         res.json(JSON.parse(responseText));
 
     } catch (err) {
-        // Log the full error to Render's console so you can see it in logs
         console.error("❌ AI ERROR:", err);
-
-        // Standardize the error response
         const statusCode = err.status || 500;
-        let errorMessage = "AI Analysis failed. Please try again later.";
-
-        if (err.message?.includes("API key")) {
-            errorMessage = "Invalid API Configuration. Check environment variables.";
-        } else if (err.message?.includes("quota")) {
-            errorMessage = "AI rate limit exceeded. Please wait a moment.";
-        }
-
         res.status(statusCode).json({
-            message: errorMessage,
+            message: "AI Analysis failed. Check server logs.",
             error: process.env.NODE_ENV === 'development' ? err.message : undefined
         });
     }
