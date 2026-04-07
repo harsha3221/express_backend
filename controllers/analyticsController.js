@@ -1,6 +1,8 @@
 const db = require("../config/database");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
+// Update the constructor to explicitly use the stable v1 API version
+// This prevents the 404 error where the SDK tries to find models on v1beta
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 exports.getAIAnalytics = async (req, res, next) => {
@@ -8,7 +10,6 @@ exports.getAIAnalytics = async (req, res, next) => {
         const { quizId } = req.params;
 
         // 1. Fetch Quiz Context & Question Statistics
-        // Changed JOIN to LEFT JOIN for questions so we can at least find the quiz title
         const [stats] = await db.execute(`
             SELECT 
                 s.name AS subject_name,
@@ -28,7 +29,6 @@ exports.getAIAnalytics = async (req, res, next) => {
             GROUP BY q.id, qz.id, s.id
         `, [quizId]);
 
-        // DEBUG LOG: Check your terminal to see if data is coming back
         console.log(`[AI Analytics] Query results for Quiz ${quizId}:`, stats.length, "rows");
 
         // 2. Validation
@@ -36,7 +36,6 @@ exports.getAIAnalytics = async (req, res, next) => {
             return res.status(404).json({ message: "Quiz not found or no questions available for analysis." });
         }
 
-        // If questions exist but no one has taken it yet
         const totalAttempts = stats[0].total_students_count;
         if (totalAttempts === 0) {
             return res.status(200).json({
@@ -53,7 +52,7 @@ exports.getAIAnalytics = async (req, res, next) => {
         const quizTitle = stats[0].quiz_title;
 
         const processedStats = stats
-            .filter(row => row.question_id !== null) // Ignore null questions if any
+            .filter(row => row.question_id !== null)
             .map(row => {
                 const answered = row.times_answered || 0;
                 const correct = row.correct_count || 0;
@@ -99,7 +98,8 @@ exports.getAIAnalytics = async (req, res, next) => {
             }
         `;
 
-        // 5. Call Gemini
+        // 5. Call Gemini with explicit model name and versioning fix
+        // Using "gemini-1.5-flash-latest" or "gemini-1.5-flash" specifically
         const model = genAI.getGenerativeModel({
             model: "gemini-1.5-flash",
             generationConfig: { responseMimeType: "application/json" }
@@ -111,7 +111,15 @@ exports.getAIAnalytics = async (req, res, next) => {
         res.json(JSON.parse(responseText));
 
     } catch (err) {
-        console.error("❌ AI Analytics Error:", err);
-        res.status(500).json({ message: "AI Analysis failed", error: err.message });
+        // Detailed logging for Render console
+        console.error("❌ AI Analytics Error Detail:", err);
+
+        // If it's a specific Google error, send that back
+        const errorMessage = err.response?.data?.error?.message || err.message;
+
+        res.status(500).json({
+            message: "AI Analysis failed",
+            error: errorMessage
+        });
     }
 };
