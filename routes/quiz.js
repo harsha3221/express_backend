@@ -4,7 +4,7 @@ const quizController = require('../controllers/quizController');
 
 
 
-
+router.post("/generate-ai", quizController.generateQuestionAI);
 // Create a quiz
 router.post('/create', quizController.createQuiz);
 
@@ -32,5 +32,7 @@ router.delete('/:quizId', quizController.deleteQuiz);
 
 
 router.get('/:quizId/upload-signature', quizController.getUploadSignature);
+
+
 
 module.exports = router;

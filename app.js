@@ -13,6 +13,8 @@ const csrf = require("csurf");
 const path = require("path");
 
 
+
+
 /* ---------------- CORS ---------------- */
 app.use(
   cors({
@@ -23,7 +25,8 @@ app.use(
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.urlencoded({ extended: true }));
+
+ 
 
 /* ---------------- SESSION ---------------- */
 const sessionStore = new MySQLStore({}, db.db);
@@ -37,15 +40,14 @@ app.use(
     cookie: {
       maxAge: 1000 * 60 * 60, // 1 hour
       httpOnly: true, // Prevents client-side JS from reading the cookie
-      sameSite: 'strict', // Prevents CSRF
-      secure: process.env.NODE_ENV === 'production', // Requires HTTPS in production
+      sameSite: 'lax',
+      secure: false,  
     },
   })
 );
 
 /* ---------------- CSRF ---------------- */
-const csrfProtection = csrf({ cookie: false });
-
+const csrfProtection = csrf();
 /* ---------------- ROUTES ---------------- */
 app.use(authRoute);
 
@@ -66,6 +68,14 @@ app.get("/me", csrfProtection, (req, res) => {
 
 
 /* ✅ APPLY CSRF ONLY TO MUTATING ROUTES */
+// ✅ handle ONLY this route WITHOUT CSRF
+app.use(express.json());
+const quizController = require("./controllers/quizController");
+
+
+// ✅ PUBLIC ROUTE (NO CSRF)
+app.post("/generate-ai", quizController.generateQuestionAI);
+// ❗ CSRF PROTECTED ROUTES
 app.use("/quiz", csrfProtection, quizRoutes);
 app.use("/teacher", csrfProtection, teacherRoute);
 app.use("/student", csrfProtection, studentRoutes);

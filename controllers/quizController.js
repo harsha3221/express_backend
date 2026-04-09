@@ -6,6 +6,7 @@ const fs = require("fs");
 const cloudinary = require('../config/cloudinary');
 const path = require("path");
 const db = require('../config/database');
+
 //this is the helper function to deal with the unwanted access ,can be removed 
 async function ensureQuizBelongsToTeacher(quizId, userId) {
     const [teacherRows] = await Teacher.findByUserId(userId);
@@ -359,4 +360,62 @@ exports.getUploadSignature = async (req, res, next) => {
     } catch (err) {
         next(err);
     }
+};
+
+const axios = require("axios");
+console.log("🔥 NEW AI FUNCTION HIT");
+
+exports.generateQuestionAI = async (req, res, next) => {
+  try {
+    const { topic, difficulty } = req.body;
+
+    const prompt = `
+Generate 1 ${difficulty} level MCQ on ${topic}.
+
+Return ONLY JSON:
+{
+  "question": "string",
+  "options": [
+    {"text": "Option A", "is_correct": false},
+    {"text": "Option B", "is_correct": true},
+    {"text": "Option C", "is_correct": false},
+    {"text": "Option D", "is_correct": false}
+  ]
+}
+`;
+
+    const response = await axios.post(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        model: "openrouter/free",
+        messages: [{ role: "user", content: prompt }],
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "http://localhost:3000",
+          "X-Title": "quiz-app",
+        },
+      }
+    );
+
+    let text = response.data.choices[0].message.content;
+
+    // Clean response
+    text = text.replace(/```json|```/g, "").trim();
+
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      return res.status(500).json({ message: "Invalid AI response" });
+    }
+
+    res.status(200).json(json);
+
+  } catch (err) {
+    console.error("AI ERROR:", err.message);
+    res.status(500).json({ message: "AI failed" });
+  }
 };
